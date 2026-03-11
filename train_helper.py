@@ -8,8 +8,6 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 from jax import random
-
-from pyscfad import numpy as anp
 from pyscfad.ml.gto import MolePad
 from pyscfad.ml.xtb.param import GFN1ParamArray, GFN1MoleParam
 from pyscfad.ml.xtb.xtb_pad import GFN1XTB
@@ -51,11 +49,19 @@ class XTBModel(nnx.Module):
         basis,
         preserve_sign: bool = True,
         rngs: nnx.Rngs | None = None,
+        node_feat_dim: int | None = None,
+        max_qm: int | None = None,
+        max_mm: int | None = None,
     ) -> None:
         self.mace = mace_model
-        self.xtb_param = xtb_param
-        self.basis = basis
+        self.xtb_param = nnx.data(xtb_param)
+        self.basis = nnx.data(basis)
         self.preserve_sign = preserve_sign
+
+        if max_qm is None or max_mm is None:
+            raise ValueError("max_qm and max_mm must be provided for static padding.")
+        self.max_qm = int(max_qm)
+        self.max_mm = int(max_mm)
 
         self.atom_fields = ("arep", "zeff", "gam", "gam3")
         self.shell_fields = ("kcn", "selfenergy", "shpoly", "lgam")
@@ -64,10 +70,13 @@ class XTBModel(nnx.Module):
 
         if rngs is None:
             rngs = nnx.Rngs(params=random.key(0))
+        self._rngs = rngs
 
+        if node_feat_dim is None:
+            raise ValueError("node_feat_dim must be provided to build decoder.")
         self.decoder = nnx.Sequential(
-            nnx.SiLU(rngs=rngs),
-            nnx.Linear(self.head_dim, rngs=rngs),
+            nnx.silu,
+            nnx.Linear(node_feat_dim, self.head_dim, rngs=self._rngs),
         )
 
         self.global_names = ("kf", "kEN", "kcn_d3")
@@ -76,7 +85,7 @@ class XTBModel(nnx.Module):
         )
         self.offset = nnx.Param(jnp.zeros((), dtype=jnp.float64))
 
-        self.mm_radii_table = jnp.asarray(COV_D3, dtype=jnp.float64)
+        self.mm_radii_table = nnx.data(jnp.asarray(COV_D3, dtype=jnp.float64))
 
     def __call__(self, batchdict: dict[str, jnp.ndarray]):
         mace_out = self.mace(batchdict, compute_node_feats=True)
@@ -115,48 +124,40 @@ class XTBModel(nnx.Module):
         ptr = jnp.asarray(batchdict["ptr"])
         ptr_mm = jnp.asarray(batchdict["ptr_mm"])
         n_graph = ptr.shape[0] - 1
-        n_qm_each = ptr[1:] - ptr[:-1]
-        n_mm_each = ptr_mm[1:] - ptr_mm[:-1]
-        max_qm = int(n_qm_each.max())
-        max_mm = int(n_mm_each.max())
+        max_qm = self.max_qm
+        max_mm = self.max_mm
 
-        def init(shape, dtype):
-            return jnp.zeros(shape, dtype=dtype)
+        idx_q = jnp.arange(max_qm)
+        idx_m = jnp.arange(max_mm)
 
-        zqm = init((n_graph, max_qm), jnp.int32)
-        Rqm = init((n_graph, max_qm, 3), jnp.float64)
-        qqm = init((n_graph, max_qm), jnp.float64)
-        atomwise_p = init((n_graph, max_qm, self.head_dim), jnp.float64)
-        mask_qm = init((n_graph, max_qm), jnp.float32)
-
-        zmm = init((n_graph, max_mm), jnp.int32)
-        Rmm = init((n_graph, max_mm, 3), jnp.float64)
-        qmm = init((n_graph, max_mm), jnp.float64)
-        mask_mm = init((n_graph, max_mm), jnp.float32)
-
-        cell = init((n_graph, 3, 3), jnp.float64)
-
-        def update_slice(base, data, start, length):
-            return base.at[:, start : start + length].set(data)
-
-        for i in range(n_graph):
-            p1, p2 = int(ptr[i]), int(ptr[i + 1])
-            q1, q2 = int(ptr_mm[i]), int(ptr_mm[i + 1])
+        def gather_q(i):
+            p1 = ptr[i]
+            p2 = ptr[i + 1]
             nq = p2 - p1
+            sel = jnp.clip(p1 + idx_q, 0, batchdict["z"].shape[0] - 1)
+            mask = idx_q < nq
+            z = jnp.where(mask, batchdict["z"][sel], 0)
+            R = jnp.where(mask[:, None], batchdict["positions"][sel], 0.0)
+            q = jnp.where(mask, batchdict["q"][sel], 0.0)
+            aw = jnp.where(mask[:, None], atomwise[sel], 0.0)
+            maskf = mask.astype(jnp.float32)
+            return z, R, q, aw, maskf
+
+        def gather_m(i):
+            q1 = ptr_mm[i]
+            q2 = ptr_mm[i + 1]
             nm = q2 - q1
+            sel = jnp.clip(q1 + idx_m, 0, batchdict["z_mm"].shape[0] - 1)
+            mask = idx_m < nm
+            z = jnp.where(mask, batchdict["z_mm"][sel], 0)
+            R = jnp.where(mask[:, None], batchdict["positions_mm"][sel], 0.0)
+            q = jnp.where(mask, batchdict["q_mm"][sel], 0.0)
+            maskf = mask.astype(jnp.float32)
+            return z, R, q, maskf
 
-            zqm = zqm.at[i, :nq].set(batchdict["z"][p1:p2])
-            Rqm = Rqm.at[i, :nq, :].set(batchdict["positions"][p1:p2])
-            qqm = qqm.at[i, :nq].set(batchdict["q"][p1:p2])
-            atomwise_p = atomwise_p.at[i, :nq, :].set(atomwise[p1:p2])
-            mask_qm = mask_qm.at[i, :nq].set(1.0)
-
-            zmm = zmm.at[i, :nm].set(batchdict["z_mm"][q1:q2])
-            Rmm = Rmm.at[i, :nm, :].set(batchdict["positions_mm"][q1:q2])
-            qmm = qmm.at[i, :nm].set(batchdict["q_mm"][q1:q2])
-            mask_mm = mask_mm.at[i, :nm].set(1.0)
-
-            cell = cell.at[i].set(batchdict["cell"][i])
+        zqm, Rqm, qqm, atomwise_p, mask_qm = jax.vmap(gather_q)(jnp.arange(n_graph))
+        zmm, Rmm, qmm, mask_mm = jax.vmap(gather_m)(jnp.arange(n_graph))
+        cell = batchdict["cell"][:n_graph]
 
         return {
             "zqm": zqm,
@@ -195,7 +196,7 @@ class XTBModel(nnx.Module):
     ) -> GFN1MoleParam:
         atom_part, shell_part = self._split_atomwise(atomwise)
         atom_mask = mask_qm
-        shell_mask = jnp.asarray(self.basis.mask_shl[np.asarray(numbers, dtype=int)])
+        shell_mask = jnp.asarray(self.basis.mask_shl[jnp.asarray(numbers, dtype=int)])
         shell_part = jnp.where(shell_mask[..., None], shell_part, 1.0)
 
         flat = lambda idx: shell_part[..., idx].reshape(-1)
@@ -229,13 +230,13 @@ class XTBModel(nnx.Module):
         mask_mm: jnp.ndarray,
         gfactors: jnp.ndarray,
     ) -> jnp.ndarray:
-        coords_bohr = anp.asarray(Rqm * A / Bohr)
-        mm_coords_bohr = anp.asarray(Rmm * A / Bohr)
-        cell_bohr = anp.asarray(cell * A / Bohr)
+        coords_bohr = jnp.asarray(Rqm * A / Bohr)
+        mm_coords_bohr = jnp.asarray(Rmm * A / Bohr)
+        cell_bohr = jnp.asarray(cell * A / Bohr)
 
         charge = int(-jnp.round(jnp.sum(qmm * mask_mm)))
         mol = MolePad(
-            anp.asarray(zqm, dtype=anp.int32),
+            jnp.asarray(zqm, dtype=jnp.int32),
             coords_bohr,
             basis=self.basis,
             verbose=0,
@@ -243,19 +244,19 @@ class XTBModel(nnx.Module):
             charge=charge,
         )
 
-        param_arr = self._apply_global(self.xtb_param, gfactors)
+        param_arr = self._apply_global(self.xtb_param.value, gfactors)
         param_mol = param_arr.to_mol_param(mol)
         param_mol = self._apply_atomwise(mol, param_mol, zqm, atomwise, mask_qm)
 
         mf = GFN1XTB(mol, param_mol)
-        mm_radii = self.mm_radii_table[jnp.asarray(zmm, dtype=jnp.int32)]
+        mm_radii = self.mm_radii_table.value[jnp.asarray(zmm, dtype=jnp.int32)]
         mm_radii = mm_radii * mask_mm
         mf = add_mm_charges(
             mf,
             mm_coords_bohr,
             cell_bohr,
-            anp.asarray(qmm * mask_mm),
-            anp.asarray(mm_radii),
+            jnp.asarray(qmm * mask_mm),
+            jnp.asarray(mm_radii),
             unit="Bohr",
             pbcqm=True,
         )
