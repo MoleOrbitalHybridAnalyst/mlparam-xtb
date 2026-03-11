@@ -63,7 +63,7 @@ class XTBModel(nnx.Module):
         self.max_qm = int(max_qm)
         self.max_mm = int(max_mm)
 
-        self.atom_fields = ("arep", "zeff", "gam", "gam3")
+        self.atom_fields = ("EN", "arep", "zeff", "gam3", "dipgam", "quadgam")
         self.shell_fields = ("kcn", "selfenergy", "shpoly", "lgam")
         self.max_shells = int(self.basis.nbas)
         self.head_dim = len(self.atom_fields) + len(self.shell_fields) * self.max_shells
@@ -78,12 +78,22 @@ class XTBModel(nnx.Module):
             nnx.silu,
             nnx.Linear(node_feat_dim, self.head_dim, rngs=self._rngs),
         )
+        self.decoder[1].kernel = self.decoder.kernel[1].value * 0.
 
-        self.global_names = ("kf", "kEN", "kcn_d3")
+        self.global_names = ("kf", "kEN")
         self.global_factors = nnx.Param(
             jnp.ones((len(self.global_names),), dtype=jnp.float64)
         )
         self.offset = nnx.Param(jnp.zeros((), dtype=jnp.float64))
+
+        self.k_shlpr_diag_factors = nnx.Param(jnp.ones(xtb_param.k_shlpr.shape[0], dtype=jnp.float64))
+
+        if self.preserve_sign:
+            self.global_factors = self.global_factors.value * 0.541325
+            self.k_shlpr_diag_factors = self.k_shlpr_diag_factors.value * 0.541325
+            self.decoder[1].bias = jnp.ones_like(self.decoder[1].bias.value) * 0.541325
+        else:
+            self.decoder[1].bias = jnp.ones_like(self.decoder[1].bias.value)
 
         self.mm_radii_table = nnx.data(jnp.asarray(COV_D3, dtype=jnp.float64))
 
@@ -97,9 +107,12 @@ class XTBModel(nnx.Module):
         if self.preserve_sign:
             atomwise = jax.nn.softplus(atomwise_raw)
             gfactors = jax.nn.softplus(self.global_factors.value)
+            k_shlpr_factors = jax.nn.softplus(self.k_shlpr_diag_factors.value)
         else:
             atomwise = atomwise_raw
             gfactors = self.global_factors.value
+            k_shlpr_factors = self.k_shlpr_diag_factors.value
+
 
         # pack per-graph tensors to fixed shapes and run vmapped XTB
         packed = self._pack_batch(batchdict, atomwise)
@@ -183,8 +196,7 @@ class XTBModel(nnx.Module):
     def _apply_global(self, param: GFN1ParamArray, gfactors: jnp.ndarray) -> GFN1ParamArray:
         kf = param.kf * gfactors[0]
         kEN = param.kEN * gfactors[1]
-        kcn_d3 = param.kcn_d3 * gfactors[2]
-        return replace(param, kf=kf, kEN=kEN, kcn_d3=kcn_d3)
+        return replace(param, kf=kf, kEN=kEN)
 
     def _apply_atomwise(
         self,
