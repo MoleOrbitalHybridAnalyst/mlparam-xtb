@@ -265,16 +265,19 @@ class XTBModel(nnx.Module):
         shell_part = jnp.where(shell_mask[..., None], shell_part, 1.0)
 
         flat = lambda idx: shell_part[..., idx].reshape(-1)
-        atm_to_bas = jnp.asarray(atom_to_bas_indices(mol), dtype=jnp.int32)
 
         atom_part = atom_part * atom_mask[..., None]
+        dipgam = None if param.dipgam is None else param.dipgam * atom_part[:, 4]
+        quadgam = None if param.quadgam is None else param.quadgam * atom_part[:, 5]
 
         return replace(
             param,
-            arep=param.arep * atom_part[:, 0],
-            zeff=param.zeff * atom_part[:, 1],
-            gam=param.gam * atom_part[:, 2][atm_to_bas],
+            EN=param.EN * atom_part[:,0],
+            arep=param.arep * atom_part[:, 1],
+            zeff=param.zeff * atom_part[:, 2],
             gam3=param.gam3 * atom_part[:, 3],
+            dipgam=dipgam,
+            quadgam=quadgam,
             kcn=param.kcn * flat(0),
             selfenergy=param.selfenergy * flat(1),
             shpoly=param.shpoly * flat(2),
@@ -337,7 +340,6 @@ class XTBModel(nnx.Module):
         mf.conv_tol = 1e-7
         mf.diis_damp = 0.6
         energy = mf.kernel()
-        jax.debug.breakpoint()
         return jnp.asarray(energy) * hartree / eV
 
 
