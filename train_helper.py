@@ -165,6 +165,7 @@ class XTBModel(nnx.Module):
 
         # pack per-graph tensors to fixed shapes and run vmapped XTB
         packed = self._pack_batch(batchdict, atomwise)
+        breakpoint()
         e_xtb = jax.vmap(
             self._xtb_energy_single,
             in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None),
@@ -309,7 +310,7 @@ class XTBModel(nnx.Module):
             jnp.asarray(zqm, dtype=jnp.int32),
             coords_bohr,
             basis=self.basis,
-            verbose=0,
+            verbose=4,
             trace_coords=True,
             charge=charge,
         )
@@ -337,7 +338,7 @@ class XTBModel(nnx.Module):
             pbcqm=True,
         )
         mf.diis = "qbroyden"
-        mf.conv_tol = 1e-7
+        mf.conv_tol = 1e-6
         mf.diis_damp = 0.6
         energy = mf.kernel()
         return jnp.asarray(energy) * hartree / eV
