@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import replace
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -10,6 +10,7 @@ from flax import nnx
 from jax import random
 from pyscfad.ml.gto import MolePad
 from pyscfad.ml.xtb.param import GFN1ParamArray, GFN1MoleParam
+from e3nn_jax import Irreps
 from pyscfad.ml.xtb.xtb_pad import GFN1XTB
 from pyscfad.xtb.data.radii import COV_D3
 from pyscfad.xtb.qmmm_pbc.itrf import add_mm_charges
@@ -37,6 +38,32 @@ def loop_molecule_from_batch(batchdict, atomwise):
             batchdict["cell"][i],
             atomwise[p1:p2],
         )
+
+
+def scalar_node_feature_indices(mace_model: Any) -> jnp.ndarray | None:
+    """Return the scalar-node indices visible in the MACE products.
+
+    Returns ``None`` if ``mace_model`` does not expose ``products`` or if the
+    products do not specify ``target_irreps`` (e.g. dummy modules)."""
+
+    products = getattr(mace_model, "products", None)
+    if products is None:
+        return None
+
+    indices: list[int] = []
+    offset = 0
+    for product in products:
+        target_irreps = getattr(product, "target_irreps", None)
+        if target_irreps is None:
+            return None
+        for mul_ir in Irreps(target_irreps):
+            chunk = mul_ir.dim
+            if mul_ir.ir.is_scalar():
+                indices.extend(range(offset, offset + chunk))
+            offset += chunk
+    if not indices:
+        raise ValueError("MACE model does not expose any scalar node features.")
+    return jnp.asarray(indices, dtype=jnp.int32)
 
 
 class XTBModel(nnx.Module):
@@ -72,13 +99,28 @@ class XTBModel(nnx.Module):
             rngs = nnx.Rngs(params=random.key(0))
         self._rngs = rngs
 
-        if node_feat_dim is None:
-            raise ValueError("node_feat_dim must be provided to build decoder.")
+        scalar_indices = scalar_node_feature_indices(mace_model)
+        if scalar_indices is None:
+            self._scalar_feature_indices = None
+            if node_feat_dim is None:
+                raise ValueError("node_feat_dim must be provided when the MACE model lacks product irreps.")
+        else:
+            self._scalar_feature_indices = scalar_indices
+            scalar_dim = int(self._scalar_feature_indices.shape[0])
+            if scalar_dim == 0:
+                raise ValueError("MACE model does not expose any scalar node features.")
+            if node_feat_dim is None:
+                node_feat_dim = scalar_dim
+            elif node_feat_dim != scalar_dim:
+                raise ValueError(
+                    "Provided node_feat_dim must match the scalar channels exposed by the MACE model."
+                )
         self.decoder = nnx.Sequential(
             nnx.silu,
             nnx.Linear(node_feat_dim, self.head_dim, rngs=self._rngs),
         )
-        self.decoder[1].kernel = self.decoder.kernel[1].value * 0.
+        decoder_linear = self.decoder.layers[-1]
+        decoder_linear.kernel.value = decoder_linear.kernel.value * 0.
 
         self.global_names = ("kf", "kEN")
         self.global_factors = nnx.Param(
@@ -89,11 +131,11 @@ class XTBModel(nnx.Module):
         self.k_shlpr_diag_factors = nnx.Param(jnp.ones(xtb_param.k_shlpr.shape[0], dtype=jnp.float64))
 
         if self.preserve_sign:
-            self.global_factors = self.global_factors.value * 0.541325
-            self.k_shlpr_diag_factors = self.k_shlpr_diag_factors.value * 0.541325
-            self.decoder[1].bias = jnp.ones_like(self.decoder[1].bias.value) * 0.541325
+            self.global_factors.value = self.global_factors * 0.541325
+            self.k_shlpr_diag_factors.value = self.k_shlpr_diag_factors * 0.541325
+            decoder_linear.bias.value = jnp.ones_like(decoder_linear.bias.value) * 0.541325
         else:
-            self.decoder[1].bias = jnp.ones_like(self.decoder[1].bias.value)
+            decoder_linear.bias.value = jnp.ones_like(decoder_linear.bias.value)
 
         self.mm_radii_table = nnx.data(jnp.asarray(COV_D3, dtype=jnp.float64))
 
@@ -102,6 +144,9 @@ class XTBModel(nnx.Module):
         node_feats = mace_out["node_feats"]
         if node_feats is None:
             raise RuntimeError("MACE model must return node_feats for parameter head.")
+
+        if self._scalar_feature_indices is not None:
+            node_feats = node_feats[:, self._scalar_feature_indices]
 
         atomwise_raw = self.decoder(node_feats)
         if self.preserve_sign:
@@ -112,11 +157,18 @@ class XTBModel(nnx.Module):
             atomwise = atomwise_raw
             gfactors = self.global_factors.value
             k_shlpr_factors = self.k_shlpr_diag_factors.value
+        base_param = self.xtb_param
+        k_shlpr_diag = jnp.diagonal(base_param.k_shlpr) * k_shlpr_factors
+        k_shlpr = 0.5 * (k_shlpr_diag[:, None] + k_shlpr_diag[None, :])
+        xtb_param = replace(base_param, k_shlpr=k_shlpr)
 
 
         # pack per-graph tensors to fixed shapes and run vmapped XTB
         packed = self._pack_batch(batchdict, atomwise)
-        e_xtb = jax.vmap(self._xtb_energy_single)(
+        e_xtb = jax.vmap(
+            self._xtb_energy_single,
+            in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None),
+        )(
             packed["zqm"],
             packed["Rqm"],
             packed["zmm"],
@@ -128,6 +180,7 @@ class XTBModel(nnx.Module):
             packed["mask_qm"],
             packed["mask_mm"],
             gfactors,
+            xtb_param,
         )
         e_mace = mace_out["interaction_energy"]
         return e_xtb + e_mace + self.offset.value
@@ -241,12 +294,14 @@ class XTBModel(nnx.Module):
         mask_qm: jnp.ndarray,
         mask_mm: jnp.ndarray,
         gfactors: jnp.ndarray,
+        xtb_param: GFN1ParamArray,
     ) -> jnp.ndarray:
         coords_bohr = jnp.asarray(Rqm * A / Bohr)
         mm_coords_bohr = jnp.asarray(Rmm * A / Bohr)
         cell_bohr = jnp.asarray(cell * A / Bohr)
 
-        charge = int(-jnp.round(jnp.sum(qmm * mask_mm)))
+        # TODO read qm charge from batch (if any)
+        charge = -jnp.round(jnp.sum(qmm * mask_mm)).astype(int)
         mol = MolePad(
             jnp.asarray(zqm, dtype=jnp.int32),
             coords_bohr,
@@ -256,19 +311,25 @@ class XTBModel(nnx.Module):
             charge=charge,
         )
 
-        param_arr = self._apply_global(self.xtb_param.value, gfactors)
+        param_arr = self._apply_global(xtb_param, gfactors)
         param_mol = param_arr.to_mol_param(mol)
         param_mol = self._apply_atomwise(mol, param_mol, zqm, atomwise, mask_qm)
 
         mf = GFN1XTB(mol, param_mol)
-        mm_radii = self.mm_radii_table.value[jnp.asarray(zmm, dtype=jnp.int32)]
+        mm_radii = self.mm_radii_table[jnp.asarray(zmm, dtype=jnp.int32)]
         mm_radii = mm_radii * mask_mm
+        # TODO pass mm_ew_mesh instead of hard coded
         mf = add_mm_charges(
             mf,
             mm_coords_bohr,
             cell_bohr,
             jnp.asarray(qmm * mask_mm),
             jnp.asarray(mm_radii),
+            max_mm_nbr=512,
+            mm_ew_rcut=18.,
+            mm_ew_mesh=[80,80,80],
+            qm_ew_mesh=[40,40,40],
+            ew_precision=1e-6,
             unit="Bohr",
             pbcqm=True,
         )
@@ -276,6 +337,7 @@ class XTBModel(nnx.Module):
         mf.conv_tol = 1e-7
         mf.diis_damp = 0.6
         energy = mf.kernel()
+        jax.debug.breakpoint()
         return jnp.asarray(energy) * hartree / eV
 
 
@@ -327,4 +389,11 @@ def load_checkpoint(path: str) -> dict:
     return jax.serialization.from_bytes({}, data)
 
 
-__all__ = ["XTBModel", "energy_loss", "force_loss", "save_checkpoint", "load_checkpoint"]
+__all__ = [
+    "XTBModel",
+    "scalar_node_feature_indices",
+    "energy_loss",
+    "force_loss",
+    "save_checkpoint",
+    "load_checkpoint",
+]
