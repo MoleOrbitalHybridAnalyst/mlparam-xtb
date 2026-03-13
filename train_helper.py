@@ -79,11 +79,16 @@ class XTBModel(nnx.Module):
         node_feat_dim: int | None = None,
         max_qm: int | None = None,
         max_mm: int | None = None,
+        ew_precision: float = 1e-6,
+        scf_conv_tol: float = 1e-6,
     ) -> None:
         self.mace = mace_model
         self.xtb_param = nnx.data(xtb_param)
         self.basis = nnx.data(basis)
         self.preserve_sign = preserve_sign
+        self.ew_precision = ew_precision
+        self.scf_conv_tol = scf_conv_tol
+
 
         if max_qm is None or max_mm is None:
             raise ValueError("max_qm and max_mm must be provided for static padding.")
@@ -131,9 +136,9 @@ class XTBModel(nnx.Module):
         self.k_shlpr_diag_factors = nnx.Param(jnp.ones(xtb_param.k_shlpr.shape[0], dtype=jnp.float64))
 
         if self.preserve_sign:
-            self.global_factors.value = self.global_factors * 0.541325
-            self.k_shlpr_diag_factors.value = self.k_shlpr_diag_factors * 0.541325
-            decoder_linear.bias.value = jnp.ones_like(decoder_linear.bias.value) * 0.541325
+            self.global_factors.value = jnp.full_like(self.global_factors.value, 0.5413248)
+            self.k_shlpr_diag_factors.value = jnp.full_like(self.k_shlpr_diag_factors.value, 0.5413248)
+            decoder_linear.bias.value = jnp.ones_like(decoder_linear.bias.value) * 0.5413248
         else:
             decoder_linear.bias.value = jnp.ones_like(decoder_linear.bias.value)
 
@@ -165,7 +170,6 @@ class XTBModel(nnx.Module):
 
         # pack per-graph tensors to fixed shapes and run vmapped XTB
         packed = self._pack_batch(batchdict, atomwise)
-        breakpoint()
         e_xtb = jax.vmap(
             self._xtb_energy_single,
             in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None),
@@ -204,7 +208,7 @@ class XTBModel(nnx.Module):
             sel = jnp.clip(p1 + idx_q, 0, batchdict["z"].shape[0] - 1)
             mask = idx_q < nq
             z = jnp.where(mask, batchdict["z"][sel], 0)
-            R = jnp.where(mask[:, None], batchdict["positions"][sel], 0.0)
+            R = jnp.where(mask[:, None], batchdict["positions"][sel], 0.)
             q = jnp.where(mask, batchdict["q"][sel], 0.0)
             aw = jnp.where(mask[:, None], atomwise[sel], 0.0)
             maskf = mask.astype(jnp.float32)
@@ -217,7 +221,7 @@ class XTBModel(nnx.Module):
             sel = jnp.clip(q1 + idx_m, 0, batchdict["z_mm"].shape[0] - 1)
             mask = idx_m < nm
             z = jnp.where(mask, batchdict["z_mm"][sel], 0)
-            R = jnp.where(mask[:, None], batchdict["positions_mm"][sel], 0.0)
+            R = jnp.where(mask[:, None], batchdict["positions_mm"][sel], 0.)
             q = jnp.where(mask, batchdict["q_mm"][sel], 0.0)
             maskf = mask.astype(jnp.float32)
             return z, R, q, maskf
@@ -263,11 +267,12 @@ class XTBModel(nnx.Module):
         atom_part, shell_part = self._split_atomwise(atomwise)
         atom_mask = mask_qm
         shell_mask = jnp.asarray(self.basis.mask_shl[jnp.asarray(numbers, dtype=int)])
+        shell_mask = shell_mask & (atom_mask[..., None] > 0)
         shell_part = jnp.where(shell_mask[..., None], shell_part, 1.0)
 
         flat = lambda idx: shell_part[..., idx].reshape(-1)
 
-        atom_part = atom_part * atom_mask[..., None]
+        atom_part = jnp.where(atom_mask[..., None] > 0, atom_part, 1.0)
         dipgam = None if param.dipgam is None else param.dipgam * atom_part[:, 4]
         quadgam = None if param.quadgam is None else param.quadgam * atom_part[:, 5]
 
@@ -304,7 +309,7 @@ class XTBModel(nnx.Module):
         mm_coords_bohr = jnp.asarray(Rmm * A / Bohr)
         cell_bohr = jnp.asarray(cell * A / Bohr)
 
-        # TODO read qm charge from batch (if any)
+        # TODO read qm tot charge from batch (if any)
         charge = -jnp.round(jnp.sum(qmm * mask_mm)).astype(int)
         mol = MolePad(
             jnp.asarray(zqm, dtype=jnp.int32),
@@ -320,6 +325,7 @@ class XTBModel(nnx.Module):
         param_mol = self._apply_atomwise(mol, param_mol, zqm, atomwise, mask_qm)
 
         mf = GFN1XTB(mol, param_mol)
+#        mf = GFN1XTB(mol, xtb_param.to_mol_param(mol)) # @@@@
         mm_radii = self.mm_radii_table[jnp.asarray(zmm, dtype=jnp.int32)]
         mm_radii = mm_radii * mask_mm
         # TODO pass mm_ew_mesh instead of hard coded
@@ -333,14 +339,16 @@ class XTBModel(nnx.Module):
             mm_ew_rcut=18.,
             mm_ew_mesh=[80,80,80],
             qm_ew_mesh=[40,40,40],
-            ew_precision=1e-6,
+            ew_precision=self.ew_precision,
             unit="Bohr",
             pbcqm=True,
         )
         mf.diis = "qbroyden"
-        mf.conv_tol = 1e-6
+        mf.conv_tol = self.scf_conv_tol
         mf.diis_damp = 0.6
+        # TODO initialize SCF using qqm from batch
         energy = mf.kernel()
+
         return jnp.asarray(energy) * hartree / eV
 
 
