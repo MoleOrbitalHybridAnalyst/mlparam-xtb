@@ -10,6 +10,81 @@ from mace_jax.data.neighborhood import get_neighborhood
 from mace_jax.data.utils import AtomicNumberTable, atomic_numbers_to_indices
 
 
+def pad_batch(batch: dict[str, np.ndarray], n_node: int, n_edge: int, n_mm_node: int, n_graph: int) -> dict[str, np.ndarray]:
+    """Pad a collated batch dictionary to fixed capacities."""
+    n_nodes_orig = batch["z"].shape[0]
+    n_mm_nodes_orig = batch["z_mm"].shape[0]
+    n_edges_orig = batch["edge_index"].shape[1]
+    n_graphs_orig = batch["cell"].shape[0]
+
+    pad_nodes = n_node - n_nodes_orig
+    pad_edges = n_edge - n_edges_orig
+    pad_mm_nodes = n_mm_node - n_mm_nodes_orig
+    pad_graphs = n_graph - n_graphs_orig
+
+    if pad_nodes < 0 or pad_edges < 0 or pad_mm_nodes < 0 or pad_graphs < 0:
+        raise ValueError(f"Batch exceeds padding capacities: nodes {n_nodes_orig}/{n_node}, "
+                         f"edges {n_edges_orig}/{n_edge}, mm_nodes {n_mm_nodes_orig}/{n_mm_node}, "
+                         f"graphs {n_graphs_orig}/{n_graph}")
+
+    def pad_array(arr, pad_width, axis=0, constant_values=0):
+        if pad_width == 0: return arr
+        pw = [(0, 0)] * arr.ndim
+        pw[axis] = (0, pad_width)
+        return np.pad(arr, pw, mode='constant', constant_values=constant_values)
+
+    padded = {}
+    padded["z"] = pad_array(batch["z"], pad_nodes)
+    padded["q"] = pad_array(batch["q"], pad_nodes)
+    padded["positions"] = pad_array(batch["positions"], pad_nodes)
+    padded["node_attrs"] = pad_array(batch["node_attrs"], pad_nodes)
+    padded["batch"] = pad_array(batch["batch"], pad_nodes, constant_values=n_graphs_orig)
+
+    padded["z_mm"] = pad_array(batch["z_mm"], pad_mm_nodes)
+    padded["q_mm"] = pad_array(batch["q_mm"], pad_mm_nodes)
+    padded["positions_mm"] = pad_array(batch["positions_mm"], pad_mm_nodes)
+    padded["batch_mm"] = pad_array(batch["batch_mm"], pad_mm_nodes, constant_values=n_graphs_orig)
+
+    # Point dummy edges to the first padding node
+    dummy_edge_idx = n_nodes_orig if pad_nodes > 0 else 0
+    padded["edge_index"] = pad_array(batch["edge_index"], pad_edges, axis=1, constant_values=dummy_edge_idx)
+    padded["shifts"] = pad_array(batch["shifts"], pad_edges)
+    if pad_edges > 0:
+        # Assign non-zero shifts to dummy edges to avoid NaN gradients in MACE norm
+        padded["shifts"][n_edges_orig:, :] = 1.0
+    padded["unit_shifts"] = pad_array(batch["unit_shifts"], pad_edges)
+    if pad_edges > 0:
+        padded["unit_shifts"][n_edges_orig:, :] = 1.0
+
+    padded["cell"] = pad_array(batch["cell"], pad_graphs)
+    if pad_graphs > 0:
+        # Give padding graphs a non-singular cell
+        padded["cell"][n_graphs_orig:] = np.eye(3)
+
+    padded_ptr = np.zeros(n_graph + 1, dtype=batch["ptr"].dtype)
+    padded_ptr[:n_graphs_orig + 1] = batch["ptr"]
+    padded_ptr[n_graphs_orig + 1:] = n_nodes_orig + pad_nodes
+    padded["ptr"] = padded_ptr
+
+    padded_ptr_mm = np.zeros(n_graph + 1, dtype=batch["ptr_mm"].dtype)
+    padded_ptr_mm[:n_graphs_orig + 1] = batch["ptr_mm"]
+    padded_ptr_mm[n_graphs_orig + 1:] = n_mm_nodes_orig + pad_mm_nodes
+    padded["ptr_mm"] = padded_ptr_mm
+
+    if "forces" in batch:
+        padded["forces"] = pad_array(batch["forces"], pad_nodes)
+    if "forces_mm" in batch:
+        padded["forces_mm"] = pad_array(batch["forces_mm"], pad_mm_nodes)
+    if "energy" in batch:
+        padded["energy"] = pad_array(batch["energy"], pad_graphs)
+
+    padded["graph_mask"] = pad_array(np.ones(n_graphs_orig, dtype=bool), pad_graphs, constant_values=False)
+    padded["node_mask"] = pad_array(np.ones(n_nodes_orig, dtype=bool), pad_nodes, constant_values=False)
+    padded["mm_node_mask"] = pad_array(np.ones(n_mm_nodes_orig, dtype=bool), pad_mm_nodes, constant_values=False)
+
+    return padded
+
+
 @dataclass
 class QMMMData:
     """Single QM/MM configuration stored as numpy arrays."""
@@ -203,28 +278,28 @@ def _collate(batch: List[QMMMData]) -> dict[str, jnp.ndarray]:
             forces_mm.append(data.forces_mm)
 
     result = {
-        "edge_index": jnp.asarray(np.concatenate(edge_index, axis=1), dtype=jnp.int32),
-        "shifts": jnp.asarray(np.concatenate(shifts, axis=0)),
-        "unit_shifts": jnp.asarray(np.concatenate(unit_shifts, axis=0)),
-        "positions": jnp.asarray(np.concatenate(positions, axis=0)),
-        "node_attrs": jnp.asarray(np.concatenate(node_attrs, axis=0)),
-        "z": jnp.asarray(np.concatenate(z, axis=0), dtype=jnp.int32),
-        "q": jnp.asarray(np.concatenate(q, axis=0)),
-        "positions_mm": jnp.asarray(np.concatenate(positions_mm, axis=0)),
-        "z_mm": jnp.asarray(np.concatenate(z_mm, axis=0), dtype=jnp.int32),
-        "q_mm": jnp.asarray(np.concatenate(q_mm, axis=0)),
-        "batch": jnp.asarray(np.concatenate(batch_qm, axis=0), dtype=jnp.int32),
-        "batch_mm": jnp.asarray(np.concatenate(batch_mm, axis=0), dtype=jnp.int32),
-        "ptr": jnp.asarray(np.asarray(ptr, dtype=np.int32)),
-        "ptr_mm": jnp.asarray(np.asarray(ptr_mm, dtype=np.int32)),
-        "cell": jnp.asarray(np.concatenate(cells, axis=0)),
+        "edge_index": np.asarray(np.concatenate(edge_index, axis=1), dtype=np.int32),
+        "shifts": np.asarray(np.concatenate(shifts, axis=0)),
+        "unit_shifts": np.asarray(np.concatenate(unit_shifts, axis=0)),
+        "positions": np.asarray(np.concatenate(positions, axis=0)),
+        "node_attrs": np.asarray(np.concatenate(node_attrs, axis=0)),
+        "z": np.asarray(np.concatenate(z, axis=0), dtype=np.int32),
+        "q": np.asarray(np.concatenate(q, axis=0)),
+        "positions_mm": np.asarray(np.concatenate(positions_mm, axis=0)),
+        "z_mm": np.asarray(np.concatenate(z_mm, axis=0), dtype=np.int32),
+        "q_mm": np.asarray(np.concatenate(q_mm, axis=0)),
+        "batch": np.asarray(np.concatenate(batch_qm, axis=0), dtype=np.int32),
+        "batch_mm": np.asarray(np.concatenate(batch_mm, axis=0), dtype=np.int32),
+        "ptr": np.asarray(np.asarray(ptr, dtype=np.int32)),
+        "ptr_mm": np.asarray(np.asarray(ptr_mm, dtype=np.int32)),
+        "cell": np.asarray(np.concatenate(cells, axis=0)),
     }
     if forces:
-        result["forces"] = jnp.asarray(np.concatenate(forces, axis=0))
+        result["forces"] = np.asarray(np.concatenate(forces, axis=0))
     if forces_mm:
-        result["forces_mm"] = jnp.asarray(np.concatenate(forces_mm, axis=0))
+        result["forces_mm"] = np.asarray(np.concatenate(forces_mm, axis=0))
     if energies:
-        result["energy"] = jnp.asarray(np.concatenate(energies, axis=0))
+        result["energy"] = np.asarray(np.concatenate(energies, axis=0))
     return result
 
 
@@ -238,12 +313,24 @@ class DataLoader:
         shuffle: bool = False,
         drop_last: bool = False,
         seed: Optional[int] = None,
+        pad: bool = True,
     ):
         self.dataset = dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.drop_last = drop_last
         self.rng = np.random.default_rng(seed)
+        self.pad = pad
+
+        if self.pad:
+            max_qm_single = max(s.num_nodes for s in dataset.samples)
+            max_mm_single = max(s.n_mm for s in dataset.samples)
+            max_edges_single = max(s.edge_index.shape[1] for s in dataset.samples)
+            
+            self.n_node = max_qm_single * batch_size + 1
+            self.n_mm_node = max_mm_single * batch_size + 1
+            self.n_edge = max_edges_single * batch_size + 1
+            self.n_graph = batch_size + 1
 
     def __iter__(self):
         indices = np.arange(len(self.dataset))
@@ -254,7 +341,10 @@ class DataLoader:
             if end > len(indices) and self.drop_last:
                 break
             batch_items = [self.dataset[int(i)] for i in indices[start:end]]
-            yield _collate(batch_items)
+            batch = _collate(batch_items)
+            if self.pad:
+                batch = pad_batch(batch, self.n_node, self.n_edge, self.n_mm_node, self.n_graph)
+            yield {k: jnp.asarray(v) for k, v in batch.items()}
 
 
-__all__ = ["QMMMData", "QMMMDataset", "DataLoader"]
+__all__ = ["QMMMData", "QMMMDataset", "DataLoader", "pad_batch"]

@@ -82,6 +82,10 @@ class XTBModel(nnx.Module):
         ew_precision: float = 1e-6,
         scf_conv_tol: float = 1e-6,
         scf_verbose: int = 0,
+        max_mm_nbr: int = 512,
+        mm_ew_rcut: float = 18.0,
+        mm_ew_mesh: Sequence[int] = (80, 80, 80),
+        qm_ew_mesh: Sequence[int] = (40, 40, 40),
     ) -> None:
         self.mace = mace_model
         self.xtb_param = nnx.data(xtb_param)
@@ -90,6 +94,10 @@ class XTBModel(nnx.Module):
         self.ew_precision = ew_precision
         self.scf_conv_tol = scf_conv_tol
         self.scf_verbose = scf_verbose
+        self.max_mm_nbr = max_mm_nbr
+        self.mm_ew_rcut = mm_ew_rcut
+        self.mm_ew_mesh = mm_ew_mesh
+        self.qm_ew_mesh = qm_ew_mesh
 
 
         if max_qm is None or max_mm is None:
@@ -165,6 +173,8 @@ class XTBModel(nnx.Module):
             gfactors = self.global_factors.value
             k_shlpr_factors = self.k_shlpr_diag_factors.value
         base_param = self.xtb_param
+        # NOTE that ksp != (ks + kp) / 2 but close
+        # so not exact GFN1xTB energy may be recovered
         k_shlpr_diag = jnp.diagonal(base_param.k_shlpr) * k_shlpr_factors
         k_shlpr = 0.5 * (k_shlpr_diag[:, None] + k_shlpr_diag[None, :])
         xtb_param = replace(base_param, k_shlpr=k_shlpr)
@@ -329,17 +339,16 @@ class XTBModel(nnx.Module):
         mf = GFN1XTB(mol, param_mol)
         mm_radii = self.mm_radii_table[jnp.asarray(zmm, dtype=jnp.int32)]
         mm_radii = mm_radii * mask_mm
-        # TODO pass mm_ew_mesh instead of hard coded
         mf = add_mm_charges(
             mf,
             mm_coords_bohr,
             cell_bohr,
             jnp.asarray(qmm * mask_mm),
             jnp.asarray(mm_radii),
-            max_mm_nbr=512,
-            mm_ew_rcut=18.,
-            mm_ew_mesh=[80,80,80],
-            qm_ew_mesh=[40,40,40],
+            max_mm_nbr=self.max_mm_nbr,
+            mm_ew_rcut=self.mm_ew_rcut,
+            mm_ew_mesh=self.mm_ew_mesh,
+            qm_ew_mesh=self.qm_ew_mesh,
             ew_precision=self.ew_precision,
             unit="Bohr",
             pbcqm=True,
