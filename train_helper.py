@@ -81,6 +81,7 @@ class XTBModel(nnx.Module):
         max_mm: int | None = None,
         ew_precision: float = 1e-6,
         scf_conv_tol: float = 1e-6,
+        scf_verbose: int = 0,
     ) -> None:
         self.mace = mace_model
         self.xtb_param = nnx.data(xtb_param)
@@ -88,6 +89,7 @@ class XTBModel(nnx.Module):
         self.preserve_sign = preserve_sign
         self.ew_precision = ew_precision
         self.scf_conv_tol = scf_conv_tol
+        self.scf_verbose = scf_verbose
 
 
         if max_qm is None or max_mm is None:
@@ -315,7 +317,7 @@ class XTBModel(nnx.Module):
             jnp.asarray(zqm, dtype=jnp.int32),
             coords_bohr,
             basis=self.basis,
-            verbose=4,
+            verbose=self.scf_verbose,
             trace_coords=True,
             charge=charge,
         )
@@ -325,7 +327,6 @@ class XTBModel(nnx.Module):
         param_mol = self._apply_atomwise(mol, param_mol, zqm, atomwise, mask_qm)
 
         mf = GFN1XTB(mol, param_mol)
-#        mf = GFN1XTB(mol, xtb_param.to_mol_param(mol)) # @@@@
         mm_radii = self.mm_radii_table[jnp.asarray(zmm, dtype=jnp.int32)]
         mm_radii = mm_radii * mask_mm
         # TODO pass mm_ew_mesh instead of hard coded
