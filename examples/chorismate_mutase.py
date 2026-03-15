@@ -53,7 +53,7 @@ def parse_args():
     p.add_argument(
         "--batch_size",
         type=int,
-        default=5,
+        default=3,
         help="Batch size for loader",
     )
     p.add_argument(
@@ -65,7 +65,7 @@ def parse_args():
     p.add_argument(
         "--repeat",
         type=int,
-        default=50,
+        default=500,
         help="Number of timed runs after warmup",
     )
     return p.parse_args()
@@ -178,105 +178,104 @@ def main():
         if scalar_indices is not None
         else int(mace_out["node_feats"].shape[-1])
     )
-    with jax.debug_nans(True): # @@@@
 
-        model = XTBModel(
-            mace_model=mace_module,
-            xtb_param=param,
-            basis=basis,
-            rngs=rngs,
-            node_feat_dim=node_feat_dim,
-            max_qm=max_qm,
-            max_mm=max_mm,
+    model = XTBModel(
+        mace_model=mace_module,
+        xtb_param=param,
+        basis=basis,
+        rngs=rngs,
+        node_feat_dim=node_feat_dim,
+        max_qm=max_qm,
+        max_mm=max_mm,
+    )
+
+    base_lr = 1e-5
+    warmup_lr = 1e-7
+    warmup_steps = max(args.warmup, 0)
+
+    if warmup_steps > 0:
+        lr_schedule = optax.linear_schedule(
+            init_value=warmup_lr,
+            end_value=base_lr,
+            transition_steps=warmup_steps
         )
+    else:
+        lr_schedule = base_lr
 
-        base_lr = 1e-4
-        warmup_lr = 1e-7
-        warmup_steps = max(args.warmup, 0)
+    optimizer = nnx.Optimizer(model, optax.adam(lr_schedule), wrt=nnx.Param)
 
-        if warmup_steps > 0:
-            lr_schedule = optax.linear_schedule(
-                init_value=warmup_lr,
-                end_value=base_lr,
-                transition_steps=warmup_steps
-            )
-        else:
-            lr_schedule = base_lr
+    graphdef, state = nnx.split((model, optimizer))
 
-        optimizer = nnx.Optimizer(model, optax.adam(lr_schedule), wrt=nnx.Param)
+    @jax.jit
+    def train_step(state, batch, e_scale, f_scale):
+        model, optimizer = nnx.merge(graphdef, state)
+        def loss_fn(model):
+            def energy_fn(positions, positions_mm):
+                batch_local = dict(batch)
+                batch_local["positions"] = positions
+                batch_local["positions_mm"] = positions_mm
+                e_pred = model(batch_local)
+                if "graph_mask" in batch_local:
+                    e_pred = jnp.where(batch_local["graph_mask"], e_pred, 0.0)
+                return jnp.sum(e_pred), e_pred
 
-        graphdef, state = nnx.split((model, optimizer))
+            (sum_e, e_pred), (fqm, fmm) = nnx.value_and_grad(
+                energy_fn, argnums=(0, 1), has_aux=True
+            )(batch["positions"], batch["positions_mm"])
+            fqm = -fqm
+            fmm = -fmm
 
-#        @jax.jit @@@@@@@@@
-        def train_step(state, batch, e_scale, f_scale):
-            model, optimizer = nnx.merge(graphdef, state)
-            def loss_fn(model):
-                def energy_fn(positions, positions_mm):
-                    batch_local = dict(batch)
-                    batch_local["positions"] = positions
-                    batch_local["positions_mm"] = positions_mm
-                    e_pred = model(batch_local)
-                    if "graph_mask" in batch_local:
-                        e_pred = jnp.where(batch_local["graph_mask"], e_pred, 0.0)
-                    return jnp.sum(e_pred), e_pred
+            e_diff = e_pred - batch["energy"]
+            fqm_diff = fqm - batch["forces"]
 
-                (sum_e, e_pred), (fqm, fmm) = nnx.value_and_grad(
-                    energy_fn, argnums=(0, 1), has_aux=True
-                )(batch["positions"], batch["positions_mm"])
-                fqm = -fqm
-                fmm = -fmm
+            if "graph_mask" in batch:
+                g_mask = batch["graph_mask"].astype(e_diff.dtype)
+                n_mask = batch["node_mask"].astype(fqm_diff.dtype)[..., None]
+                num_graphs = jnp.maximum(jnp.sum(g_mask), 1.0)
+                e_offset = jnp.sum(e_diff * g_mask) / num_graphs
+                loss_value_e = jnp.sum(((e_diff - e_offset) ** 2) * g_mask) / num_graphs * e_scale
+                num_qm_components = jnp.maximum(jnp.sum(n_mask) * 3.0, 1.0)
+                loss_value_f = jnp.sum((fqm_diff ** 2) * n_mask) / num_qm_components * f_scale
+            else:
+                e_offset = jnp.mean(e_diff)
+                loss_value_e = jnp.mean((e_diff - e_offset) ** 2) * e_scale
+                loss_value_f = jnp.mean(fqm_diff ** 2) * f_scale
+                num_qm_components = fqm_diff.size
 
-                e_diff = e_pred - batch["energy"]
-                fqm_diff = fqm - batch["forces"]
-
-                if "graph_mask" in batch:
-                    g_mask = batch["graph_mask"].astype(e_diff.dtype)
-                    n_mask = batch["node_mask"].astype(fqm_diff.dtype)[..., None]
-                    num_graphs = jnp.maximum(jnp.sum(g_mask), 1.0)
-                    e_offset = jnp.sum(e_diff * g_mask) / num_graphs
-                    loss_value_e = jnp.sum(((e_diff - e_offset) ** 2) * g_mask) / num_graphs * e_scale
-                    num_qm_components = jnp.maximum(jnp.sum(n_mask) * 3.0, 1.0)
-                    loss_value_f = jnp.sum((fqm_diff ** 2) * n_mask) / num_qm_components * f_scale
+            if "forces_mm" in batch and batch["forces_mm"] is not None:
+                fmm_diff = fmm - batch["forces_mm"]
+                if "mm_node_mask" in batch:
+                    mm_mask = batch["mm_node_mask"].astype(fmm_diff.dtype)[..., None]
+                    loss_value_f += jnp.sum((fmm_diff ** 2) * mm_mask) / num_qm_components * f_scale
                 else:
-                    e_offset = jnp.mean(e_diff)
-                    loss_value_e = jnp.mean((e_diff - e_offset) ** 2) * e_scale
-                    loss_value_f = jnp.mean(fqm_diff ** 2) * f_scale
-                    num_qm_components = fqm_diff.size
+                    loss_value_f += jnp.sum(fmm_diff ** 2) / num_qm_components * f_scale
 
-                if "forces_mm" in batch and batch["forces_mm"] is not None:
-                    fmm_diff = fmm - batch["forces_mm"]
-                    if "mm_node_mask" in batch:
-                        mm_mask = batch["mm_node_mask"].astype(fmm_diff.dtype)[..., None]
-                        loss_value_f += jnp.sum((fmm_diff ** 2) * mm_mask) / num_qm_components * f_scale
-                    else:
-                        loss_value_f += jnp.sum(fmm_diff ** 2) / num_qm_components * f_scale
+            total_loss = loss_value_e + loss_value_f
+            return total_loss, (loss_value_e, loss_value_f)
 
-                total_loss = loss_value_e + loss_value_f
-                return total_loss, (loss_value_e, loss_value_f)
+        (loss, (e_loss, f_loss)), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
+        optimizer.update(model, grads)
+        state = nnx.state((model, optimizer))
+        return loss, e_loss, f_loss, state
 
-            (loss, (e_loss, f_loss)), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
-            optimizer.update(model, grads)
-            state = nnx.state((model, optimizer))
-            return loss, e_loss, f_loss, state
+    def batch_generator():
+        while True:
+            for b in loader:
+                yield jax.device_put(b)
 
-        def batch_generator():
-            while True:
-                for b in loader:
-                    yield jax.device_put(b)
+    batch_iter = batch_generator()
 
-        batch_iter = batch_generator()
+    print("Starting training...")
+    for step in range(max(args.warmup, 0) + max(args.repeat, 0)):
+        step_batch = next(batch_iter)
+        t0 = time.time()
+        loss, e_loss, f_loss, state = train_step(state, step_batch, e_scale, f_scale)
+        jax.block_until_ready(loss)
+        t1 = time.time()
 
-        print("Starting training...")
-        for step in range(max(args.warmup, 0) + max(args.repeat, 0)):
-            step_batch = next(batch_iter)
-            t0 = time.time()
-            loss, e_loss, f_loss, state = train_step(state, step_batch, e_scale, f_scale)
-            jax.block_until_ready(loss)
-            t1 = time.time()
-
-            step_type = "Warmup" if step < args.warmup else "Train "
-            print(f"[{step_type}] Step {step} | Loss (%):"
-                  f" {loss*100:.4f} (E: {e_loss*100:.4f}, F: {f_loss*100:.4f}) | Time: {t1 - t0:.4f}s")
+        step_type = "Warmup" if step < args.warmup else "Train "
+        print(f"[{step_type}] Step {step} | Loss (%):"
+              f" {loss*100:.4f} (E: {e_loss*100:.4f}, F: {f_loss*100:.4f}) | Time: {t1 - t0:.4f}s")
 
 
 if __name__ == "__main__":
