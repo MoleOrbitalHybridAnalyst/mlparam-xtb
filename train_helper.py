@@ -321,8 +321,7 @@ class XTBModel(nnx.Module):
         mm_coords_bohr = jnp.asarray(Rmm * A / Bohr)
         cell_bohr = jnp.asarray(cell * A / Bohr)
 
-        # TODO read qm tot charge from batch (if any)
-        charge = -jnp.round(jnp.sum(qmm * mask_mm)).astype(int)
+        charge = jnp.round(jnp.sum(qqm * mask_qm)).astype(int)
         mol = MolePad(
             jnp.asarray(zqm, dtype=jnp.int32),
             coords_bohr,
@@ -356,8 +355,20 @@ class XTBModel(nnx.Module):
         mf.diis = "qbroyden"
         mf.conv_tol = self.scf_conv_tol
         mf.diis_damp = 0.6
-        # TODO initialize SCF using qqm from batch
-        energy = mf.kernel()
+
+        atm_to_bas = jnp.asarray(atom_to_bas_indices(mol))
+        nbas_per_atom = jnp.bincount(atm_to_bas, length=mol.natm)
+        safe_nbas = jnp.where(nbas_per_atom > 0, nbas_per_atom, 1)
+        q0 = (qqm * mask_qm)[atm_to_bas] / safe_nbas[atm_to_bas]
+
+        q0_parts = [q0]
+        if param_mol.dipgam is not None:
+            q0_parts.append(jnp.zeros(mol.natm * 3, dtype=q0.dtype))
+        if param_mol.quadgam is not None:
+            q0_parts.append(jnp.zeros(mol.natm * 9, dtype=q0.dtype))
+        q0 = jnp.concatenate(q0_parts)
+
+        energy = mf.kernel(q0=q0)
 
         return jnp.asarray(energy) * hartree / eV
 
