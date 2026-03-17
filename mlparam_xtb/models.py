@@ -161,6 +161,13 @@ class XTBModel(nnx.Module):
             gfactors,
             xtb_param,
         )
+
+        # Pad e_xtb back to match the total number of graphs in the batch
+        ptr = jnp.asarray(batchdict["ptr"])
+        n_graph = ptr.shape[0] - 1
+        pad_amount = n_graph - e_xtb.shape[0]
+        if pad_amount > 0:
+            e_xtb = jnp.pad(e_xtb, ((0, pad_amount),))
         e_mace = mace_out["interaction_energy"]
         return e_xtb + e_mace + self.offset.value
 
@@ -169,6 +176,9 @@ class XTBModel(nnx.Module):
         ptr = jnp.asarray(batchdict["ptr"])
         ptr_mm = jnp.asarray(batchdict["ptr_mm"])
         n_graph = ptr.shape[0] - 1
+        # Skip the last graph, which is always the Jraph padding graph
+        # This prevents xTB from running expensive SCF operations on dummy atoms
+        n_real_graph = max(n_graph - 1, 1)
         max_qm = self.max_qm
         max_mm = self.max_mm
 
@@ -200,9 +210,9 @@ class XTBModel(nnx.Module):
             maskf = mask.astype(jnp.float64)
             return z, R, q, maskf
 
-        zqm, Rqm, qqm, atomwise_p, mask_qm = jax.vmap(gather_q)(jnp.arange(n_graph))
-        zmm, Rmm, qmm, mask_mm = jax.vmap(gather_m)(jnp.arange(n_graph))
-        cell = batchdict["cell"][:n_graph]
+        zqm, Rqm, qqm, atomwise_p, mask_qm = jax.vmap(gather_q)(jnp.arange(n_real_graph))
+        zmm, Rmm, qmm, mask_mm = jax.vmap(gather_m)(jnp.arange(n_real_graph))
+        cell = batchdict["cell"][:n_real_graph]
 
         return {
             "zqm": zqm,
