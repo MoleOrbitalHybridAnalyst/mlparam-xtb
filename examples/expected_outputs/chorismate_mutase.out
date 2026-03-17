@@ -1,0 +1,55 @@
+JAX backend: gpu
+JAX devices: [CudaDevice(id=0)]
+e_scale: 1.8436e-01, f_scale: 5.3128e-02
+Starting training...
+[Warmup] Step 0 | Loss (%): 0.1253 (E: 0.0188, F: 0.1065) | Time: 196.6332s
+[Train ] Step 1 | Loss (%): 0.1052 (E: 0.0038, F: 0.1014) | Time: 1.0203s
+[Train ] Step 2 | Loss (%): 0.2162 (E: 0.0987, F: 0.1174) | Time: 0.9940s
+[Train ] Step 3 | Loss (%): 0.1809 (E: 0.0258, F: 0.1551) | Time: 0.9822s
+[Train ] Step 4 | Loss (%): 0.1701 (E: 0.0006, F: 0.1695) | Time: 0.9678s
+[Train ] Step 5 | Loss (%): 0.1654 (E: 0.0000, F: 0.1654) | Time: 0.9111s
+[Train ] Step 6 | Loss (%): 0.1192 (E: 0.0199, F: 0.0993) | Time: 0.9406s
+[Train ] Step 7 | Loss (%): 0.0959 (E: 0.0001, F: 0.0957) | Time: 0.9571s
+[Train ] Step 8 | Loss (%): 0.1309 (E: 0.0187, F: 0.1121) | Time: 0.9565s
+[Train ] Step 9 | Loss (%): 0.1805 (E: 0.0353, F: 0.1452) | Time: 0.9984s
+[Train ] Step 10 | Loss (%): 0.1673 (E: 0.0030, F: 0.1644) | Time: 0.9866s
+[Train ] Step 11 | Loss (%): 0.1597 (E: 0.0000, F: 0.1597) | Time: 0.9697s
+[Train ] Step 12 | Loss (%): 0.1134 (E: 0.0192, F: 0.0942) | Time: 0.9970s
+[Train ] Step 13 | Loss (%): 0.0921 (E: 0.0011, F: 0.0910) | Time: 1.0106s
+[Train ] Step 14 | Loss (%): 0.1181 (E: 0.0124, F: 0.1057) | Time: 0.9969s
+[Train ] Step 15 | Loss (%): 0.1653 (E: 0.0277, F: 0.1376) | Time: 1.0047s
+[Train ] Step 16 | Loss (%): 0.1596 (E: 0.0037, F: 0.1559) | Time: 1.0074s
+[Train ] Step 17 | Loss (%): 0.1501 (E: 0.0000, F: 0.1501) | Time: 0.9775s
+[Train ] Step 18 | Loss (%): 0.1035 (E: 0.0157, F: 0.0879) | Time: 1.0058s
+[Train ] Step 19 | Loss (%): 0.0865 (E: 0.0027, F: 0.0838) | Time: 1.0192s
+[Train ] Step 20 | Loss (%): 0.1215 (E: 0.0227, F: 0.0988) | Time: 0.9804s
+[Train ] Step 21 | Loss (%): 0.1542 (E: 0.0222, F: 0.1320) | Time: 1.0159s
+[Train ] Step 22 | Loss (%): 0.1513 (E: 0.0034, F: 0.1479) | Time: 1.0099s
+[Train ] Step 23 | Loss (%): 0.1420 (E: 0.0000, F: 0.1420) | Time: 0.9687s
+[Train ] Step 24 | Loss (%): 0.0972 (E: 0.0134, F: 0.0838) | Time: 1.0015s
+[Train ] Step 25 | Loss (%): 0.0833 (E: 0.0039, F: 0.0794) | Time: 1.0268s
+[Train ] Step 26 | Loss (%): 0.1193 (E: 0.0244, F: 0.0949) | Time: 0.9976s
+[Train ] Step 27 | Loss (%): 0.1502 (E: 0.0218, F: 0.1284) | Time: 1.0123s
+[Train ] Step 28 | Loss (%): 0.1459 (E: 0.0035, F: 0.1425) | Time: 1.0574s
+[Train ] Step 29 | Loss (%): 0.1367 (E: 0.0000, F: 0.1367) | Time: 1.0020s
+[Train ] Step 30 | Loss (%): 0.0948 (E: 0.0132, F: 0.0816) | Time: 1.0113s
+[Train ] Step 31 | Loss (%): 0.0815 (E: 0.0043, F: 0.0771) | Time: 0.9873s
+[Train ] Step 32 | Loss (%): 0.1066 (E: 0.0140, F: 0.0927) | Time: 1.0049s
+[Train ] Step 33 | Loss (%): 0.1471 (E: 0.0216, F: 0.1255) | Time: 1.0142s
+[Train ] Step 34 | Loss (%): 0.1420 (E: 0.0038, F: 0.1382) | Time: 0.9989s
+[Train ] Step 35 | Loss (%): 0.1325 (E: 0.0000, F: 0.1325) | Time: 0.9875s
+[Train ] Step 36 | Loss (%): 0.0936 (E: 0.0137, F: 0.0799) | Time: 0.9988s
+[Train ] Step 37 | Loss (%): 0.0793 (E: 0.0040, F: 0.0753) | Time: 1.0308s
+[Train ] Step 38 | Loss (%): 0.0981 (E: 0.0073, F: 0.0907) | Time: 0.9879s
+[Train ] Step 39 | Loss (%): 0.1450 (E: 0.0219, F: 0.1231) | Time: 1.0544s
+[Train ] Step 40 | Loss (%): 0.1378 (E: 0.0037, F: 0.1341) | Time: 0.9999s
+[Train ] Step 41 | Loss (%): 0.1283 (E: 0.0000, F: 0.1283) | Time: 0.9603s
+[Train ] Step 42 | Loss (%): 0.0911 (E: 0.0133, F: 0.0778) | Time: 1.0037s
+[Train ] Step 43 | Loss (%): 0.0763 (E: 0.0034, F: 0.0729) | Time: 1.0720s
+[Train ] Step 44 | Loss (%): 0.0952 (E: 0.0068, F: 0.0884) | Time: 0.9624s
+[Train ] Step 45 | Loss (%): 0.1422 (E: 0.0212, F: 0.1210) | Time: 1.0259s
+[Train ] Step 46 | Loss (%): 0.1335 (E: 0.0033, F: 0.1302) | Time: 1.0029s
+[Train ] Step 47 | Loss (%): 0.1244 (E: 0.0000, F: 0.1244) | Time: 1.0148s
+[Train ] Step 48 | Loss (%): 0.0879 (E: 0.0124, F: 0.0755) | Time: 1.0022s
+[Train ] Step 49 | Loss (%): 0.0733 (E: 0.0027, F: 0.0706) | Time: 1.0249s
+[Train ] Step 50 | Loss (%): 0.0939 (E: 0.0076, F: 0.0863) | Time: 0.9894s
