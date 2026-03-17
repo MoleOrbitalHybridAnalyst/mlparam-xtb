@@ -11,8 +11,9 @@ from mace_jax.data.utils import AtomicNumberTable
 from mace_jax.modules import ScaleShiftMACE, RealAgnosticInteractionBlock
 from mace_jax.nnx_config import ConfigVar
 from mace_jax.nnx_utils import state_to_pure_dict
-from data import QMMMData, _collate
-from train_helper import XTBModel, scalar_node_feature_indices
+from mlparam_xtb.data import QMMMData, _collate
+from mlparam_xtb.models import XTBModel
+from mlparam_xtb.utils import scalar_node_feature_indices
 
 from random import shuffle
 

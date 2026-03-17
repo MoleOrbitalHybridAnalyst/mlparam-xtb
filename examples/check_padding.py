@@ -9,8 +9,9 @@ from pyscfad.ml.xtb.param import make_param_array
 
 from mace_jax.data.utils import AtomicNumberTable
 from mace_jax.modules import ScaleShiftMACE, RealAgnosticInteractionBlock
-from data import QMMMData, _collate
-from train_helper import XTBModel, scalar_node_feature_indices
+from mlparam_xtb.data import QMMMData, _collate
+from mlparam_xtb.models import XTBModel
+from mlparam_xtb.utils import scalar_node_feature_indices
 
 
 
@@ -164,7 +165,7 @@ def main():
     from pyscfad.xtb.qmmm_pbc.itrf import add_mm_charges
     from pyscfad.xtb.param import GFN1Param
     from pyscfad.xtb.util import load_unique_element_params
-    from constants import A, Bohr, hartree, eV
+    from mlparam_xtb.constants import A, Bohr, hartree, eV
 
     e_exact = []
     g_qm_exact = []

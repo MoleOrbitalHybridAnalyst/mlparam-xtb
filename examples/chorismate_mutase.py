@@ -14,8 +14,9 @@ from pyscfad.xtb import basis as xtb_basis
 from pyscfad.ml.gto import make_basis_array
 from pyscfad.ml.xtb.param import make_param_array
 
-from data import QMMMDataset, DataLoader
-from train_helper import XTBModel, scalar_node_feature_indices, load_mace_module
+from mlparam_xtb.data import QMMMDataset, DataLoader
+from mlparam_xtb.models import XTBModel
+from mlparam_xtb.utils import scalar_node_feature_indices, load_mace_module
 
 
 
@@ -25,26 +26,23 @@ def parse_args():
         "--data",
         type=Path,
         default=Path(
-            "/home/chhli/projects/Enzyme_Kinetics_OPES_flooding/chorismate_mutase/"
-            "qmmm_single_point/wb97x-3c_refined_lno/no_constraints_qm3.1/neb_data.npz"
+            "./chorismate_mutase_deps/neb_data.npz"
         ),
-        help="NPZ file with QM/MM data",
+        help="NPZ file with QM/MM data (units in a.u.)",
     )
     p.add_argument(
         "--train_list",
         type=Path,
-        default=Path("torch_example/neb.train.list.0"),
-        help="Txt file of frame indices to load",
+        default=Path("./chorismate_mutase_deps/neb.train.list.0"),
+        help="Txt file of frame indices to load for training",
     )
     p.add_argument(
         "--model",
         type=Path,
         default=Path(
-            "/home/chhli/projects/Enzyme_Kinetics_OPES_flooding/chorismate_mutase/"
-            "ml/train/mace/train3d/bs5_lr3e-3_wt0.5_wv0.5.best.model"
+            "./chorismate_mutase_deps/maceoff24_pretrained.torch.model"
         ),
-        help="MACE-JAX bundle dir or ckpt (config.json+params.msgpack). "
-        "Override this; the default path from torch_example/train.sh is a torch checkpoint and will not load.",
+        help="MACE-JAX bundle dir or ckpt (config.json+params.msgpack). ",
     )
     p.add_argument(
         "--batch_size",
