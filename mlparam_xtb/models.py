@@ -37,7 +37,7 @@ class XTBModel(nnx.Module):
         scf_verbose: int = 0,
         max_mm_nbr: int = 512,
         mm_ew_rcut: float = 18.0,
-        mm_ew_mesh: Sequence[int] = (80, 80, 80),
+        mm_ew_mesh: Sequence[int] | None = None,
         qm_ew_mesh: Sequence[int] = (40, 40, 40),
         n_decoder_layer: int = 1,
     ) -> None:
@@ -50,7 +50,6 @@ class XTBModel(nnx.Module):
         self.scf_verbose = scf_verbose
         self.max_mm_nbr = max_mm_nbr
         self.mm_ew_rcut = mm_ew_rcut
-        self.mm_ew_mesh = mm_ew_mesh
         self.qm_ew_mesh = qm_ew_mesh
 
 
@@ -58,6 +57,11 @@ class XTBModel(nnx.Module):
             raise ValueError("max_qm and max_mm must be provided for static padding.")
         self.max_qm = int(max_qm)
         self.max_mm = int(max_mm)
+
+        if mm_ew_mesh is None:
+            raise ValueError("mm_ew_mesh must be provided for static padding."
+                             "One grid per one angstrom is recommended.")
+        self.mm_ew_mesh = mm_ew_mesh
 
         self.atom_fields = ("EN", "arep", "zeff", "gam3", "dipgam", "quadgam")
         self.shell_fields = ("kcn", "selfenergy", "shpoly", "lgam")
@@ -279,14 +283,13 @@ class XTBModel(nnx.Module):
         mm_coords_bohr = jnp.asarray(Rmm * A / Bohr)
         cell_bohr = jnp.asarray(cell * A / Bohr)
 
-        charge = jnp.round(jnp.sum(qqm * mask_qm)).astype(int)
         mol = MolePad(
             jnp.asarray(zqm, dtype=jnp.int32),
             coords_bohr,
             basis=self.basis,
             verbose=self.scf_verbose,
             trace_coords=True,
-            charge=charge,
+            charge=jnp.round(jnp.sum(qqm * mask_qm)).astype(int),
         )
 
         param_arr = self._apply_global(xtb_param, gfactors)

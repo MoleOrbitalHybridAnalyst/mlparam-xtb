@@ -115,6 +115,7 @@ class Checkpointer:
     """
     def __init__(self, ckpt_dir, keep_latest=1, keep_best=1, save_stride=200, erase=False):
         self.ckpt_dir = epath.Path(ckpt_dir).resolve()
+        self.ckpt_dir.mkdir(parents=True, exist_ok=True)
 
         if erase:
             ocp.test_utils.erase_and_create_empty(self.ckpt_dir)
