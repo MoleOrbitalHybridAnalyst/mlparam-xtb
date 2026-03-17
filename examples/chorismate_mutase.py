@@ -10,17 +10,13 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from mace_jax.tools import bundle as bundle_tools
-from mace_jax.cli.mace_jax_from_torch import convert_model
-from mace.tools.scripts_utils import extract_config_mace_model
-from mace_jax.nnx_utils import state_to_pure_dict
-from mace_jax.data.utils import AtomicNumberTable
 from pyscfad.xtb import basis as xtb_basis
 from pyscfad.ml.gto import make_basis_array
 from pyscfad.ml.xtb.param import make_param_array
 
 from data import QMMMDataset, DataLoader
-from train_helper import XTBModel, scalar_node_feature_indices
+from train_helper import XTBModel, scalar_node_feature_indices, load_mace_module
+
 
 
 def parse_args():
@@ -65,7 +61,7 @@ def parse_args():
     p.add_argument(
         "--repeat",
         type=int,
-        default=500,
+        default=50,
         help="Number of timed runs after warmup",
     )
     return p.parse_args()
@@ -81,42 +77,8 @@ def main():
             print(" -", m)
         return
 
-    def _load_mace_module(model_path: Path):
-        # Try native JAX bundle first
-        try:
-            bundle = bundle_tools.load_model_bundle(str(model_path), dtype="float64")
-            mace_module = nnx.merge(bundle.graphdef, bundle.params)
-            z_table = AtomicNumberTable([int(z) for z in mace_module.atomic_numbers])
-            cutoff = float(mace_module.r_max)
-            return mace_module, z_table, cutoff
-        except Exception:
-            pass
-
-        # Fallback: Torch checkpoint -> JAX via convert_model
-        try:
-            import torch  # noqa: PLC0415
-        except ModuleNotFoundError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "Torch not available to convert torch checkpoint; "
-                "provide a JAX bundle instead."
-            ) from exc
-
-        torch_model = torch.load(model_path, map_location="cpu")
-        if isinstance(torch_model, dict) and "model" in torch_model:
-            torch_model = torch_model["model"]
-        torch_model.eval()
-
-        config = extract_config_mace_model(torch_model)
-        if "error" in config:
-            raise RuntimeError(config["error"])
-        graphdef, state, _ = convert_model(torch_model, config)
-        mace_module = nnx.merge(graphdef, state)
-        z_table = AtomicNumberTable([int(z) for z in mace_module.atomic_numbers])
-        cutoff = float(mace_module.r_max)
-        return mace_module, z_table, cutoff
-
     try:
-        mace_module, z_table, cutoff = _load_mace_module(args.model)
+        mace_module, z_table, cutoff = load_mace_module(args.model)
     except Exception as exc:  # pragma: no cover - defensive
         print(f"Failed to load/convert model at {args.model}: {exc}")
         return
@@ -142,26 +104,26 @@ def main():
     # precompute static max sizes for padding
     max_qm = max(s.z.shape[0] for s in dataset.samples)
     max_mm = max(s.z_mm.shape[0] for s in dataset.samples)
-
     max_z = max(s.z.max() for s in dataset.samples)
 
-    # Scan dataset for energy and forces
+    # Scan dataset for eneryg and force ranges
     energies = []
     forces = []
     for s in dataset.samples:
         if s.energy is not None:
-            energies.append(s.energy)
+            energies.append(np.max(s.energy))
+            energies.append(np.min(s.energy))
         if s.forces is not None:
-            forces.append(s.forces)
+            forces.append(np.max(s.forces))
+            forces.append(np.min(s.forces))
         if s.forces_mm is not None:
-            forces.append(s.forces_mm)
-            
-    energies = np.concatenate([np.atleast_1d(e) for e in energies])
-    forces = np.concatenate([np.atleast_2d(f) for f in forces], axis=0)
-    
+            forces.append(np.max(s.forces_mm))
+            forces.append(np.min(s.forces_mm))
+
     e_scale = float(1.0 / max(np.ptp(energies) ** 2, 1e-8))
     f_scale = float(1.0 / max(np.ptp(forces) ** 2, 1e-8))
     print(f"e_scale: {e_scale:.4e}, f_scale: {f_scale:.4e}")
+
 
     basis = make_basis_array(xtb_basis.get_basis_filename(), max_number=max_z)
     param = make_param_array(basis, max_number=max_z)
@@ -173,11 +135,7 @@ def main():
     # determine node feature dim by a single MACE forward pass (no state context needed)
     mace_out = mace_module(batch, compute_node_feats=True)
     scalar_indices = scalar_node_feature_indices(mace_module)
-    node_feat_dim = (
-        int(scalar_indices.shape[0])
-        if scalar_indices is not None
-        else int(mace_out["node_feats"].shape[-1])
-    )
+    node_feat_dim = int(scalar_indices.shape[0])
 
     model = XTBModel(
         mace_model=mace_module,
@@ -187,6 +145,9 @@ def main():
         node_feat_dim=node_feat_dim,
         max_qm=max_qm,
         max_mm=max_mm,
+        mm_ew_mesh=(80, 80, 80),
+        qm_ew_mesh=(40, 40, 40),
+        n_decoder_layer=2,
     )
 
     base_lr = 1e-5

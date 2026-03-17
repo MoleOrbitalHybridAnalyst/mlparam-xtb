@@ -213,6 +213,9 @@ def main():
         max_mm=max_mm,
         ew_precision=1e-7,
         scf_conv_tol=1e-8,
+        mm_ew_mesh=(80, 80, 80),
+        qm_ew_mesh=(40, 40, 40),
+        n_decoder_layer=2,
     )
 
     # add some noise to perturb xtb parameters
