@@ -332,6 +332,12 @@ class DataLoader:
             self.n_edge = max_edges_single * batch_size + 1
             self.n_graph = batch_size + 1
 
+    def __len__(self):
+        if self.drop_last:
+            return len(self.dataset) // self.batch_size
+        else:
+            return (len(self.dataset) + self.batch_size - 1) // self.batch_size
+
     def __iter__(self):
         indices = np.arange(len(self.dataset))
         if self.shuffle:
