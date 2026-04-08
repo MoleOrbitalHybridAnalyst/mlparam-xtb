@@ -104,7 +104,7 @@ def main():
     max_mm = max(s.z_mm.shape[0] for s in dataset.samples)
     max_z = max(s.z.max() for s in dataset.samples)
 
-    # Scan dataset for eneryg and force ranges
+    # Scan dataset for energy and force ranges
     energies = []
     forces = []
     for s in dataset.samples:
@@ -130,7 +130,7 @@ def main():
 
 
     rngs = nnx.Rngs(params=jax.random.key(0))
-    # determine node feature dim by a single MACE forward pass (no state context needed)
+    # determine node scalar feature dim
     mace_out = mace_module(batch, compute_node_feats=True)
     scalar_indices = scalar_node_feature_indices(mace_module)
     node_feat_dim = int(scalar_indices.shape[0])
@@ -143,7 +143,9 @@ def main():
         node_feat_dim=node_feat_dim,
         max_qm=max_qm,
         max_mm=max_mm,
+        # MM mesh should be roughly 1 grid per 1 angstrom of total box
         mm_ew_mesh=(80, 80, 80),
+        # QM mesh is system independent
         qm_ew_mesh=(40, 40, 40),
         n_decoder_layer=2,
     )
