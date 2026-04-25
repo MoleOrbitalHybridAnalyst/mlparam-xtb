@@ -15,7 +15,10 @@ from mlparam_xtb.data import QMMMData, _collate
 from mlparam_xtb.models import XTBModel
 from mlparam_xtb.utils import scalar_node_feature_indices
 
-from random import shuffle
+from e3nn_jax import Irreps
+
+from random import seed, shuffle
+seed(123123)
 
 
 def _merge_state_dicts(base: dict | None, updates: dict | None) -> dict | None:
@@ -156,6 +159,29 @@ def make_sample_two(z_table):
         cutoff=5.0,
     )
 
+def make_dummy_sample(z_table):
+    """Build a dummy sample"""
+    zqm = jnp.array([1], dtype=jnp.int32)
+    Rqm = jnp.zeros((1,3), dtype=jnp.float64)
+    zmm = jnp.array([1], dtype=jnp.int32)
+    Rmm = jnp.zeros((1,3), dtype=jnp.float64)
+    a = jnp.eye(3)
+    qqm = jnp.array([0.])
+    qmm = jnp.array([0.])
+    return QMMMData.from_raw(
+        zqm=zqm,
+        Rqm=Rqm,
+        zmm=zmm,
+        Rmm=Rmm,
+        a=a,
+        E=None,
+        Fqm=None,
+        Fmm=None,
+        qqm=qqm,
+        qmm=qmm,
+        z_table=z_table,
+        cutoff=5.0,
+    )
 
 def main():
     # Basis / parameters
@@ -166,8 +192,8 @@ def main():
     # Atomic number table from QM atoms
     z_table = AtomicNumberTable([1, 8])
 
-    # Build two samples and collate
-    samples = [make_sample(z_table), make_sample_two(z_table)]
+    # Build two samples and collate (note the last sample will always be ignored)
+    samples = [make_sample(z_table), make_sample_two(z_table), make_dummy_sample(z_table)]
     batch = _collate(samples)
     batch = jax.device_put(batch)
 
@@ -190,8 +216,8 @@ def main():
         atomic_numbers=tuple(z_table.zs),
         num_interactions=2,
         num_elements=len(z_table),
-        hidden_irreps="16x0e+16x1o",
-        MLP_irreps="16x0e",
+        hidden_irreps=Irreps("16x0e+16x1o"),
+        MLP_irreps=Irreps("16x0e"),
         avg_num_neighbors=4.0,
         rngs=rngs,
     )

@@ -13,6 +13,8 @@ from mlparam_xtb.data import QMMMData, _collate
 from mlparam_xtb.models import XTBModel
 from mlparam_xtb.utils import scalar_node_feature_indices
 
+from e3nn_jax import Irreps
+
 
 
 def make_sample(z_table):
@@ -89,6 +91,30 @@ def make_sample_two(z_table):
         cutoff=5.0,
     )
 
+def make_dummy_sample(z_table):
+    """Build a dummy sample"""
+    zqm = jnp.array([1], dtype=jnp.int32)
+    Rqm = jnp.zeros((1,3), dtype=jnp.float64)
+    zmm = jnp.array([1], dtype=jnp.int32)
+    Rmm = jnp.zeros((1,3), dtype=jnp.float64)
+    a = jnp.eye(3)
+    qqm = jnp.array([0.])
+    qmm = jnp.array([0.])
+    return QMMMData.from_raw(
+        zqm=zqm,
+        Rqm=Rqm,
+        zmm=zmm,
+        Rmm=Rmm,
+        a=a,
+        E=None,
+        Fqm=None,
+        Fmm=None,
+        qqm=qqm,
+        qmm=qmm,
+        z_table=z_table,
+        cutoff=5.0,
+    )
+
 
 def main():
     # Basis / parameters
@@ -101,8 +127,8 @@ def main():
     # Atomic number table from QM atoms
     z_table = AtomicNumberTable([1, 8])
 
-    # Build two samples and collate
-    samples = [make_sample(z_table), make_sample_two(z_table)]
+    # Build two samples and collate (note that the last sample will always be ignored)
+    samples = [make_sample(z_table), make_sample_two(z_table), make_dummy_sample(z_table)]
     batch = _collate(samples)
     batch = jax.device_put(batch)
 
@@ -122,8 +148,8 @@ def main():
         atomic_numbers=tuple(z_table.zs),
         num_interactions=2,
         num_elements=len(z_table),
-        hidden_irreps="16x0e+16x1o",
-        MLP_irreps="16x0e",
+        hidden_irreps=Irreps("16x0e+16x1o"),
+        MLP_irreps=Irreps("16x0e"),
         avg_num_neighbors=4.0,
         rngs=rngs,
     )
@@ -145,6 +171,7 @@ def main():
         max_qm=max_qm,
         max_mm=max_mm,
         ew_precision=1e-7,
+        mm_ew_mesh=[20,20,20],
         scf_conv_tol=1e-8,
         scf_verbose=4,
         preserve_sign=False,
@@ -171,7 +198,7 @@ def main():
     g_qm_exact = []
     g_mm_exact = []
 
-    for i, s in enumerate(samples):
+    for i, s in enumerate(samples[:-1]):
         def energy_fn(pos_qm, pos_mm):
             coords_bohr = jnp.asarray(pos_qm * A / Bohr)
             mm_coords_bohr = jnp.asarray(pos_mm * A / Bohr)

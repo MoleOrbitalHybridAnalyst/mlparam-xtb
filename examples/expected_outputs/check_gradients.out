@@ -1,66 +1,66 @@
 
 QM coordinate gradient check (finite diff, sampled):
-  atom  0 comp 0: grad=-1.758386e+00 fd=-1.758385e+00 |err|= 8.24e-07
-  atom  0 comp 2: grad=-2.699027e-01 fd=-2.699027e-01 |err|= 3.66e-08
-  atom  1 comp 2: grad= 3.539662e-01 fd= 3.539661e-01 |err|= 1.42e-08
-  atom  2 comp 2: grad=-5.732756e-02 fd=-5.732758e-02 |err|= 1.85e-08
-  atom  3 comp 1: grad= 2.835169e+00 fd= 2.835169e+00 |err|= 5.29e-07
-  atom  4 comp 1: grad=-1.094392e+00 fd=-1.094392e+00 |err|= 1.88e-09
-  atom  5 comp 1: grad=-4.071177e+00 fd=-4.071178e+00 |err|= 5.34e-07
-  atom  6 comp 0: grad= 2.110065e+00 fd= 2.110066e+00 |err|= 6.48e-07
+  atom  0 comp 0: grad=-1.758386e+00 fd=-1.758385e+00 |err|= 8.28e-07
+  atom  1 comp 0: grad=-1.718713e-01 fd=-1.718721e-01 |err|= 8.00e-07
+  atom  2 comp 0: grad= 2.385874e+00 fd= 2.385874e+00 |err|= 7.06e-08
+  atom  3 comp 0: grad= 8.950962e+00 fd= 8.950962e+00 |err|= 6.92e-07
+  atom  4 comp 0: grad=-4.608769e+00 fd=-4.608769e+00 |err|= 6.57e-07
+  atom  5 comp 0: grad=-4.421043e+00 fd=-4.421043e+00 |err|= 2.65e-08
+  atom  6 comp 0: grad= 2.110065e+00 fd= 2.110066e+00 |err|= 6.49e-07
   atom  7 comp 0: grad=-6.809640e-01 fd=-6.809646e-01 |err|= 6.13e-07
-  atom  8 comp 0: grad=-9.928989e-01 fd=-9.928989e-01 |err|= 3.86e-08
+  atom  8 comp 0: grad=-9.928989e-01 fd=-9.928989e-01 |err|= 3.91e-08
+  atom  9 comp 0: grad=-1.457168e-16 fd= 0.000000e+00 |err|= 1.46e-16
 
 MM coordinate gradient check (finite diff, sampled):
-  atom  0 comp 0: grad=-8.690001e-01 fd=-8.690001e-01 |err|= 4.13e-08
-  atom  0 comp 1: grad= 3.437238e-01 fd= 3.437238e-01 |err|= 3.96e-09
-  atom  1 comp 0: grad= 4.133836e-01 fd= 4.133836e-01 |err|= 1.72e-08
-  atom  1 comp 1: grad=-5.677047e-01 fd=-5.677047e-01 |err|= 6.87e-09
-  atom  2 comp 0: grad= 2.278167e+00 fd= 2.278167e+00 |err|= 7.09e-09
-  atom  2 comp 1: grad=-4.679150e-01 fd=-4.679150e-01 |err|= 9.69e-10
-  atom  3 comp 0: grad=-2.391699e+00 fd=-2.391699e+00 |err|= 5.79e-09
-  atom  3 comp 1: grad= 1.426486e+00 fd= 1.426486e+00 |err|= 2.12e-09
-  atom  4 comp 0: grad=-2.438209e-01 fd=-2.438209e-01 |err|= 7.74e-10
-  atom  4 comp 1: grad= 1.595263e+00 fd= 1.595263e+00 |err|= 2.22e-09
+  atom  0 comp 0: grad=-8.690001e-01 fd=-8.690001e-01 |err|= 4.20e-08
+  atom  0 comp 1: grad= 3.437238e-01 fd= 3.437238e-01 |err|= 4.31e-09
+  atom  1 comp 0: grad= 4.133836e-01 fd= 4.133836e-01 |err|= 1.74e-08
+  atom  1 comp 2: grad= 8.781573e-02 fd= 8.781573e-02 |err|= 1.57e-09
+  atom  2 comp 1: grad=-4.679150e-01 fd=-4.679150e-01 |err|= 4.00e-10
+  atom  3 comp 0: grad=-2.391699e+00 fd=-2.391699e+00 |err|= 4.08e-09
+  atom  3 comp 1: grad= 1.426486e+00 fd= 1.426486e+00 |err|= 1.56e-09
+  atom  4 comp 0: grad=-2.438209e-01 fd=-2.438209e-01 |err|= 3.63e-10
+  atom  4 comp 2: grad=-2.658545e-01 fd=-2.658545e-01 |err|= 1.42e-09
+  atom  5 comp 1: grad= 0.000000e+00 fd= 0.000000e+00 |err|= 0.00e+00
 
 Parameter gradient check (finite diff, sampled):
   decoder/layers/3/bias[0] (Energy) grad= 1.413361e+00 fd= 1.413596e+00 |err|= 2.35e-04
-  decoder/layers/3/bias[0] (Force ) grad= 1.003362e+01 fd= 1.003532e+01 |err|= 1.71e-03
+  decoder/layers/3/bias[0] (Force ) grad= 1.003362e+01 fd= 1.003529e+01 |err|= 1.67e-03
+  decoder/layers/1/bias[0] (Energy) grad=-1.182800e+01 fd=-1.182800e+01 |err|= 3.35e-07
+  decoder/layers/1/bias[0] (Force ) grad= 4.904799e+00 fd= 4.904855e+00 |err|= 5.65e-05
   decoder/layers/3/kernel[0] (Energy) grad= 8.216456e-02 fd= 8.216442e-02 |err|= 1.40e-07
-  decoder/layers/3/kernel[0] (Force ) grad= 1.181208e+00 fd= 1.181270e+00 |err|= 6.24e-05
-  decoder/layers/1/bias[0] (Energy) grad=-1.182800e+01 fd=-1.182800e+01 |err|= 3.36e-07
-  decoder/layers/1/bias[0] (Force ) grad= 4.904799e+00 fd= 4.904742e+00 |err|= 5.72e-05
+  decoder/layers/3/kernel[0] (Force ) grad= 1.181208e+00 fd= 1.181171e+00 |err|= 3.71e-05
   decoder/layers/1/kernel[0] (Energy) grad= 2.528151e-01 fd= 2.528193e-01 |err|= 4.27e-06
-  decoder/layers/1/kernel[0] (Force ) grad= 1.828067e+00 fd= 1.828196e+00 |err|= 1.29e-04
-  mace/products/0/symmetric_contractions/weight[0] (Energy) grad= 2.135292e-02 fd= 2.135292e-02 |err|= 8.80e-10
-  mace/products/0/symmetric_contractions/weight[0] (Force ) grad= 8.799351e-01 fd= 8.800070e-01 |err|= 7.19e-05
-  mace/interactions/0/conv_tp_weights/layers/3/weight[0] (Energy) grad=-2.402275e-03 fd=-2.402275e-03 |err|= 7.76e-10
-  mace/interactions/0/conv_tp_weights/layers/3/weight[0] (Force ) grad= 5.280943e-01 fd= 5.281101e-01 |err|= 1.58e-05
-  mace/readouts/1/linear_1/weight[0] (Energy) grad=-2.918978e-04 fd=-2.918983e-04 |err|= 5.94e-10
-  mace/readouts/1/linear_1/weight[0] (Force ) grad=-4.799763e-02 fd=-4.799763e-02 |err|= 7.12e-11
-  mace/interactions/0/conv_tp_weights/layers/1/weight[0] (Energy) grad= 2.418291e-02 fd= 2.418291e-02 |err|= 6.74e-10
-  mace/interactions/0/conv_tp_weights/layers/1/weight[0] (Force ) grad= 5.236853e-01 fd= 5.236561e-01 |err|= 2.92e-05
-  mace/interactions/1/conv_tp_weights/layers/1/weight[0] (Energy) grad= 1.995267e-03 fd= 1.995266e-03 |err|= 1.12e-09
-  mace/interactions/1/conv_tp_weights/layers/1/weight[0] (Force ) grad= 2.337705e-02 fd= 2.341186e-02 |err|= 3.48e-05
-  offset[0] (Energy) grad= 2.000000e+00 fd= 2.000000e+00 |err|= 2.18e-10
-  offset[0] (Force ) grad= 0.000000e+00 fd=-1.421085e-10 |err|= 1.42e-10
-  mace/interactions/0/linear/weight[0] (Energy) grad=-1.970405e-01 fd=-1.970405e-01 |err|= 1.26e-09
-  mace/interactions/0/linear/weight[0] (Force ) grad=-3.951949e+00 fd=-3.951931e+00 |err|= 1.84e-05
-  mace/interactions/1/conv_tp_weights/layers/3/weight[0] (Energy) grad= 2.367529e-03 fd= 2.367527e-03 |err|= 2.27e-09
-  mace/interactions/1/conv_tp_weights/layers/3/weight[0] (Force ) grad=-4.101881e-02 fd=-4.116462e-02 |err|= 1.46e-04
-  mace/interactions/1/linear_up/weight[0] (Energy) grad= 4.550581e-03 fd= 4.550580e-03 |err|= 5.68e-10
-  mace/interactions/1/linear_up/weight[0] (Force ) grad= 1.512410e-01 fd= 1.513002e-01 |err|= 5.92e-05
-  mace/atomic_energies_fn/atomic_energies[0] (Energy) grad= 0.000000e+00 fd= 0.000000e+00 |err|= 0.00e+00
-  mace/atomic_energies_fn/atomic_energies[0] (Force ) grad= 0.000000e+00 fd= 0.000000e+00 |err|= 0.00e+00
-  mace/interactions/1/conv_tp_weights/layers/0/weight[0] (Energy) grad= 7.616921e-03 fd= 7.616920e-03 |err|= 2.70e-10
-  mace/interactions/1/conv_tp_weights/layers/0/weight[0] (Force ) grad= 1.161423e-01 fd= 1.162820e-01 |err|= 1.40e-04
-  mace/interactions/0/conv_tp_weights/layers/0/weight[0] (Energy) grad=-7.893110e-02 fd=-7.893110e-02 |err|= 1.58e-10
-  mace/interactions/0/conv_tp_weights/layers/0/weight[0] (Force ) grad=-1.545814e+00 fd=-1.545880e+00 |err|= 6.61e-05
-  mace/interactions/1/linear/weight[0] (Energy) grad=-7.844479e-03 fd=-7.844480e-03 |err|= 9.75e-10
-  mace/interactions/1/linear/weight[0] (Force ) grad= 2.508596e-02 fd= 2.515430e-02 |err|= 6.83e-05
-  mace/products/1/symmetric_contractions/weight[0] (Energy) grad= 2.101725e-03 fd= 2.101722e-03 |err|= 2.36e-09
-  mace/products/1/symmetric_contractions/weight[0] (Force ) grad= 1.985018e-02 fd= 1.979021e-02 |err|= 6.00e-05
-  mace/interactions/0/linear_up/weight[0] (Energy) grad= 2.293922e-02 fd= 2.293922e-02 |err|= 1.49e-09
-  mace/interactions/0/linear_up/weight[0] (Force ) grad=-1.159119e+00 fd=-1.159035e+00 |err|= 8.43e-05
-  k_shlpr_diag_factors[0] (Energy) grad=-3.362545e+01 fd=-3.362545e+01 |err|= 1.03e-07
-  k_shlpr_diag_factors[0] (Force ) grad=-2.297985e+02 fd=-2.297983e+02 |err|= 1.40e-04
+  decoder/layers/1/kernel[0] (Force ) grad= 1.828067e+00 fd= 1.828206e+00 |err|= 1.39e-04
+  mace/products/0/linear/weight[0] (Energy) grad=-9.249471e-02 fd=-9.249471e-02 |err|= 5.22e-10
+  mace/products/0/linear/weight[0] (Force ) grad=-8.028046e-01 fd=-8.030041e-01 |err|= 2.00e-04
+  mace/interactions/1/linear/weight[0] (Energy) grad=-1.815480e-01 fd=-1.815480e-01 |err|= 1.08e-10
+  mace/interactions/1/linear/weight[0] (Force ) grad= 2.508596e-02 fd= 2.502123e-02 |err|= 6.47e-05
+  mace/node_embedding/linear/weight[0] (Energy) grad= 1.153996e+00 fd= 1.153996e+00 |err|= 3.09e-10
+  mace/node_embedding/linear/weight[0] (Force ) grad=-5.823022e-01 fd=-5.822313e-01 |err|= 7.09e-05
+  mace/interactions/1/conv_tp_weights/layers/3/weight[0] (Energy) grad=-2.406532e-01 fd=-2.406532e-01 |err|= 2.44e-10
+  mace/interactions/1/conv_tp_weights/layers/3/weight[0] (Force ) grad=-4.101881e-02 fd=-4.082858e-02 |err|= 1.90e-04
+  mace/interactions/1/conv_tp_weights/layers/0/weight[0] (Energy) grad=-6.731819e-01 fd=-6.731819e-01 |err|= 6.03e-10
+  mace/interactions/1/conv_tp_weights/layers/0/weight[0] (Force ) grad= 1.161423e-01 fd= 1.162244e-01 |err|= 8.21e-05
+  mace/interactions/1/linear_up/weight[0] (Energy) grad=-1.486131e-02 fd=-1.486131e-02 |err|= 7.02e-10
+  mace/interactions/1/linear_up/weight[0] (Force ) grad= 1.512410e-01 fd= 1.512632e-01 |err|= 2.22e-05
+  mace/readouts/1/linear_2/weight[0] (Energy) grad= 3.324976e-01 fd= 3.324976e-01 |err|= 3.75e-10
+  mace/readouts/1/linear_2/weight[0] (Force ) grad= 2.106322e+00 fd= 2.106322e+00 |err|= 8.27e-10
+  mace/interactions/0/linear/weight[0] (Energy) grad= 1.738169e-01 fd= 1.738169e-01 |err|= 1.53e-09
+  mace/interactions/0/linear/weight[0] (Force ) grad=-3.951949e+00 fd=-3.951939e+00 |err|= 1.03e-05
+  offset[0] (Energy) grad= 3.000000e+00 fd= 3.000000e+00 |err|= 1.85e-10
+  offset[0] (Force ) grad= 0.000000e+00 fd= 0.000000e+00 |err|= 0.00e+00
+  global_factors[0] (Energy) grad=-9.064965e+00 fd=-9.064965e+00 |err|= 1.80e-08
+  global_factors[0] (Force ) grad=-3.303426e+02 fd=-3.303426e+02 |err|= 2.44e-06
+  mace/interactions/0/skip_tp/weight[0] (Energy) grad= 3.676656e-01 fd= 3.676656e-01 |err|= 3.92e-10
+  mace/interactions/0/skip_tp/weight[0] (Force ) grad=-3.741553e-01 fd=-3.740950e-01 |err|= 6.03e-05
+  mace/interactions/0/conv_tp_weights/layers/2/weight[0] (Energy) grad=-5.234894e-02 fd=-5.234894e-02 |err|= 1.73e-10
+  mace/interactions/0/conv_tp_weights/layers/2/weight[0] (Force ) grad= 7.076865e-01 fd= 7.077560e-01 |err|= 6.94e-05
+  mace/products/1/symmetric_contractions/weight[0] (Energy) grad= 8.868385e-02 fd= 8.868385e-02 |err|= 1.21e-09
+  mace/products/1/symmetric_contractions/weight[0] (Force ) grad= 1.985018e-02 fd= 1.980758e-02 |err|= 4.26e-05
+  mace/interactions/1/skip_tp/weight[0] (Energy) grad= 3.225278e-02 fd= 3.225278e-02 |err|= 9.35e-10
+  mace/interactions/1/skip_tp/weight[0] (Force ) grad= 3.797841e-02 fd= 3.806093e-02 |err|= 8.25e-05
+  mace/interactions/0/conv_tp_weights/layers/3/weight[0] (Energy) grad=-1.199781e-01 fd=-1.199781e-01 |err|= 4.70e-12
+  mace/interactions/0/conv_tp_weights/layers/3/weight[0] (Force ) grad= 5.280943e-01 fd= 5.281614e-01 |err|= 6.71e-05
+  mace/interactions/0/linear_up/weight[0] (Energy) grad= 3.450246e-01 fd= 3.450246e-01 |err|= 1.08e-09
+  mace/interactions/0/linear_up/weight[0] (Force ) grad=-1.159119e+00 fd=-1.159092e+00 |err|= 2.68e-05
