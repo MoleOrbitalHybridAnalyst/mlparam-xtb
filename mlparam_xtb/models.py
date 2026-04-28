@@ -34,7 +34,9 @@ class XTBModel(nnx.Module):
         max_mm: int | None = None,
         ew_precision: float = 1e-6,
         scf_conv_tol: float = 1e-6,
+        scf_max_cycle: int = 50,
         scf_verbose: int = 0,
+        scf_sigma: float | None = None,
         max_mm_nbr: int = 512,
         mm_ew_rcut: float = 18.0,
         mm_ew_mesh: Sequence[int] | None = None,
@@ -47,7 +49,9 @@ class XTBModel(nnx.Module):
         self.preserve_sign = preserve_sign
         self.ew_precision = ew_precision
         self.scf_conv_tol = scf_conv_tol
+        self.scf_max_cycle = scf_max_cycle
         self.scf_verbose = scf_verbose
+        self.scf_sigma = scf_sigma
         self.max_mm_nbr = max_mm_nbr
         self.mm_ew_rcut = mm_ew_rcut
         self.qm_ew_mesh = qm_ew_mesh
@@ -325,7 +329,9 @@ class XTBModel(nnx.Module):
         )
         mf.diis = "qbroyden"
         mf.conv_tol = self.scf_conv_tol
+        mf.max_cycle = self.scf_max_cycle
         mf.diis_damp = 0.6
+        mf.sigma = self.scf_sigma
 
         atm_to_bas = jnp.asarray(atom_to_bas_indices(mol))
         nbas_per_atom = jnp.bincount(atm_to_bas, length=mol.natm)
