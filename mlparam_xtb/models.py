@@ -42,7 +42,13 @@ class XTBModel(nnx.Module):
         mm_ew_mesh: Sequence[int] | None = None,
         qm_ew_mesh: Sequence[int] = (40, 40, 40),
         n_decoder_layer: int = 1,
+        scf_init_guess: str = "atomic_charges",
     ) -> None:
+        if scf_init_guess not in ("pyscfad", "atomic_charges", "from_data"):
+            raise ValueError(
+                f"scf_init_guess must be one of 'pyscfad', 'atomic_charges', 'from_data'; got {scf_init_guess!r}"
+            )
+        self.scf_init_guess = scf_init_guess
         self.mace = mace_model
         self.xtb_param = nnx.data(xtb_param)
         self.basis = nnx.data(basis)
@@ -150,7 +156,7 @@ class XTBModel(nnx.Module):
         packed = self._pack_batch(batchdict, atomwise)
         e_xtb = jax.vmap(
             self._xtb_energy_single,
-            in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None),
+            in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None),
         )(
             packed["zqm"],
             packed["Rqm"],
@@ -162,6 +168,9 @@ class XTBModel(nnx.Module):
             packed["atomwise"],
             packed["mask_qm"],
             packed["mask_mm"],
+            packed["shell_charges"],
+            packed["atom_dips"],
+            packed["atom_quads"],
             gfactors,
             xtb_param,
         )
@@ -189,6 +198,20 @@ class XTBModel(nnx.Module):
         idx_q = jnp.arange(max_qm)
         idx_m = jnp.arange(max_mm)
 
+        n_nodes = batchdict["z"].shape[0]
+        if self.scf_init_guess == "from_data":
+            if "shell_charges" not in batchdict:
+                raise KeyError(
+                    "scf_init_guess='from_data' requires 'shell_charges' in the batch dict"
+                )
+            shell_charges_full = batchdict["shell_charges"]
+            atom_dips_full = batchdict["atom_dips"]
+            atom_quads_full = batchdict["atom_quads"]
+        else:
+            shell_charges_full = jnp.zeros((n_nodes, self.max_shells), dtype=jnp.float64)
+            atom_dips_full = jnp.zeros((n_nodes, 3), dtype=jnp.float64)
+            atom_quads_full = jnp.zeros((n_nodes, 3, 3), dtype=jnp.float64)
+
         def gather_q(i):
             p1 = ptr[i]
             p2 = ptr[i + 1]
@@ -199,8 +222,11 @@ class XTBModel(nnx.Module):
             R = jnp.where(mask[:, None], batchdict["positions"][sel], 0.)
             q = jnp.where(mask, batchdict["q"][sel], 0.0)
             aw = jnp.where(mask[:, None], atomwise[sel], 0.0)
+            sc = jnp.where(mask[:, None], shell_charges_full[sel], 0.0)
+            ad = jnp.where(mask[:, None], atom_dips_full[sel], 0.0)
+            aq = jnp.where(mask[:, None, None], atom_quads_full[sel], 0.0)
             maskf = mask.astype(jnp.float64)
-            return z, R, q, aw, maskf
+            return z, R, q, aw, sc, ad, aq, maskf
 
         def gather_m(i):
             q1 = ptr_mm[i]
@@ -214,7 +240,7 @@ class XTBModel(nnx.Module):
             maskf = mask.astype(jnp.float64)
             return z, R, q, maskf
 
-        zqm, Rqm, qqm, atomwise_p, mask_qm = jax.vmap(gather_q)(jnp.arange(n_real_graph))
+        zqm, Rqm, qqm, atomwise_p, sc_p, ad_p, aq_p, mask_qm = jax.vmap(gather_q)(jnp.arange(n_real_graph))
         zmm, Rmm, qmm, mask_mm = jax.vmap(gather_m)(jnp.arange(n_real_graph))
         cell = batchdict["cell"][:n_real_graph]
 
@@ -229,6 +255,9 @@ class XTBModel(nnx.Module):
             "atomwise": atomwise_p,
             "mask_qm": mask_qm,
             "mask_mm": mask_mm,
+            "shell_charges": sc_p,
+            "atom_dips": ad_p,
+            "atom_quads": aq_p,
         }
 
     def _split_atomwise(self, atomwise: jnp.ndarray):
@@ -290,6 +319,9 @@ class XTBModel(nnx.Module):
         atomwise: jnp.ndarray,
         mask_qm: jnp.ndarray,
         mask_mm: jnp.ndarray,
+        shell_charges: jnp.ndarray,
+        atom_dips: jnp.ndarray,
+        atom_quads: jnp.ndarray,
         gfactors: jnp.ndarray,
         xtb_param: GFN1ParamArray,
     ) -> jnp.ndarray:
@@ -333,19 +365,34 @@ class XTBModel(nnx.Module):
         mf.diis_damp = 0.6
         mf.sigma = self.scf_sigma
 
-        atm_to_bas = jnp.asarray(atom_to_bas_indices(mol))
-        nbas_per_atom = jnp.bincount(atm_to_bas, length=mol.natm)
-        safe_nbas = jnp.where(nbas_per_atom > 0, nbas_per_atom, 1)
-        q0 = (qqm * mask_qm)[atm_to_bas] / safe_nbas[atm_to_bas]
+        if self.scf_init_guess == "pyscfad":
+            energy = mf.kernel()
+        else:
+            atm_to_bas = jnp.asarray(atom_to_bas_indices(mol))
+            nbas_per_atom = jnp.bincount(atm_to_bas, length=mol.natm)
+            safe_nbas = jnp.where(nbas_per_atom > 0, nbas_per_atom, 1)
 
-        q0_parts = [q0]
-        if param_mol.dipgam is not None:
-            q0_parts.append(jnp.zeros(mol.natm * 3, dtype=q0.dtype))
-        if param_mol.quadgam is not None:
-            q0_parts.append(jnp.zeros(mol.natm * 9, dtype=q0.dtype))
-        q0 = jnp.concatenate(q0_parts)
+            if self.scf_init_guess == "atomic_charges":
+                q0_shell = (qqm * mask_qm)[atm_to_bas] / safe_nbas[atm_to_bas]
+                dip_block = jnp.zeros(mol.natm * 3, dtype=q0_shell.dtype)
+                quad_block = jnp.zeros(mol.natm * 9, dtype=q0_shell.dtype)
+            else:  # "from_data"
+                first_idx = jnp.concatenate(
+                    [jnp.zeros(1, dtype=nbas_per_atom.dtype), jnp.cumsum(nbas_per_atom)[:-1]]
+                )
+                shell_in_atom = jnp.arange(atm_to_bas.shape[0]) - first_idx[atm_to_bas]
+                q0_shell = shell_charges[atm_to_bas, shell_in_atom] * mask_qm[atm_to_bas]
+                dip_block = (atom_dips * mask_qm[:, None]).reshape(-1)
+                quad_block = (atom_quads * mask_qm[:, None, None]).reshape(-1)
 
-        energy = mf.kernel(q0=q0)
+            q0_parts = [q0_shell]
+            if param_mol.dipgam is not None:
+                q0_parts.append(dip_block)
+            if param_mol.quadgam is not None:
+                q0_parts.append(quad_block)
+            q0 = jnp.concatenate(q0_parts)
+
+            energy = mf.kernel(q0=q0)
 
         return jnp.asarray(energy) * hartree / eV
 

@@ -77,6 +77,12 @@ def pad_batch(batch: dict[str, np.ndarray], n_node: int, n_edge: int, n_mm_node:
         padded["forces_mm"] = pad_array(batch["forces_mm"], pad_mm_nodes)
     if "energy" in batch:
         padded["energy"] = pad_array(batch["energy"], pad_graphs)
+    if "shell_charges" in batch:
+        padded["shell_charges"] = pad_array(batch["shell_charges"], pad_nodes)
+    if "atom_dips" in batch:
+        padded["atom_dips"] = pad_array(batch["atom_dips"], pad_nodes)
+    if "atom_quads" in batch:
+        padded["atom_quads"] = pad_array(batch["atom_quads"], pad_nodes)
 
     padded["graph_mask"] = pad_array(np.ones(n_graphs_orig, dtype=bool), pad_graphs, constant_values=False)
     padded["node_mask"] = pad_array(np.ones(n_nodes_orig, dtype=bool), pad_nodes, constant_values=False)
@@ -103,6 +109,9 @@ class QMMMData:
     forces: Optional[np.ndarray] = None  # [n_qm, 3]
     energy: Optional[np.ndarray] = None  # scalar
     forces_mm: Optional[np.ndarray] = None  # [n_mm, 3]
+    shell_charges: Optional[np.ndarray] = None  # [n_qm, max_shells]
+    atom_dips: Optional[np.ndarray] = None  # [n_qm, 3]
+    atom_quads: Optional[np.ndarray] = None  # [n_qm, 3, 3]
 
     @property
     def num_nodes(self) -> int:
@@ -127,6 +136,9 @@ class QMMMData:
         qmm: np.ndarray,
         z_table: AtomicNumberTable,
         cutoff: float,
+        shell_charges: Optional[np.ndarray] = None,
+        atom_dips: Optional[np.ndarray] = None,
+        atom_quads: Optional[np.ndarray] = None,
     ) -> "QMMMData":
         """Build a QMMMData object from raw arrays in Angstrom / eV units."""
 
@@ -156,6 +168,9 @@ class QMMMData:
             energy=None if E is None else np.asarray(E, dtype=np.float64),
             forces=None if Fqm is None else np.asarray(Fqm, dtype=np.float64),
             forces_mm=None if Fmm is None else np.asarray(Fmm, dtype=np.float64),
+            shell_charges=None if shell_charges is None else np.asarray(shell_charges, dtype=np.float64),
+            atom_dips=None if atom_dips is None else np.asarray(atom_dips, dtype=np.float64),
+            atom_quads=None if atom_quads is None else np.asarray(atom_quads, dtype=np.float64),
         )
 
 
@@ -195,6 +210,20 @@ class QMMMDataset:
 
             mm_indexes = [i for i in range(z.shape[0]) if i not in qm_indexes]
 
+            files = set(data.files)
+            has_shell_charges = "shell_charges" in files
+            shell_charges_all = data["shell_charges"] if has_shell_charges else None
+            atom_dips_all = data["atom_dips"] if "atom_dips" in files else None
+            atom_quads_all = data["atom_quads"] if "atom_quads" in files else None
+
+            n_qm = len(qm_indexes)
+            if has_shell_charges:
+                n_frames = shell_charges_all.shape[0]
+                if atom_dips_all is None:
+                    atom_dips_all = np.zeros((n_frames, n_qm, 3), dtype=np.float64)
+                if atom_quads_all is None:
+                    atom_quads_all = np.zeros((n_frames, n_qm, 3, 3), dtype=np.float64)
+
             ndata = R.shape[0]
             for i in np.arange(ndata)[dataslice]:
                 zqm = z[qm_indexes]
@@ -219,6 +248,9 @@ class QMMMDataset:
                     qmm=qmm,
                     z_table=z_table,
                     cutoff=cutoff,
+                    shell_charges=None if shell_charges_all is None else shell_charges_all[i, qm_indexes, :],
+                    atom_dips=None if atom_dips_all is None else atom_dips_all[i, qm_indexes, :],
+                    atom_quads=None if atom_quads_all is None else atom_quads_all[i, qm_indexes],
                 )
                 self.samples.append(sample)
 
@@ -249,6 +281,9 @@ def _collate(batch: List[QMMMData]) -> dict[str, jnp.ndarray]:
     forces = []
     forces_mm = []
     energies = []
+    shell_charges = []
+    atom_dips = []
+    atom_quads = []
 
     for i, data in enumerate(batch):
         offset = ptr[-1]
@@ -261,6 +296,12 @@ def _collate(batch: List[QMMMData]) -> dict[str, jnp.ndarray]:
             forces.append(data.forces)
         if data.energy is not None:
             energies.append(np.asarray(data.energy)[None])
+        if data.shell_charges is not None:
+            shell_charges.append(data.shell_charges)
+        if data.atom_dips is not None:
+            atom_dips.append(data.atom_dips)
+        if data.atom_quads is not None:
+            atom_quads.append(data.atom_quads)
 
         edge_index.append(data.edge_index + offset)
         shifts.append(data.shifts)
@@ -300,6 +341,12 @@ def _collate(batch: List[QMMMData]) -> dict[str, jnp.ndarray]:
         result["forces_mm"] = np.asarray(np.concatenate(forces_mm, axis=0))
     if energies:
         result["energy"] = np.asarray(np.concatenate(energies, axis=0))
+    if len(shell_charges) == len(batch):
+        result["shell_charges"] = np.asarray(np.concatenate(shell_charges, axis=0))
+    if len(atom_dips) == len(batch):
+        result["atom_dips"] = np.asarray(np.concatenate(atom_dips, axis=0))
+    if len(atom_quads) == len(batch):
+        result["atom_quads"] = np.asarray(np.concatenate(atom_quads, axis=0))
     return result
 
 
