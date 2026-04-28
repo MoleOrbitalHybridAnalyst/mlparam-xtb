@@ -396,6 +396,150 @@ class XTBModel(nnx.Module):
 
         return jnp.asarray(energy) * hartree / eV
 
+    def _xtb_charges_single(
+        self,
+        zqm: jnp.ndarray,
+        Rqm: jnp.ndarray,
+        zmm: jnp.ndarray,
+        Rmm: jnp.ndarray,
+        qqm: jnp.ndarray,
+        qmm: jnp.ndarray,
+        cell: jnp.ndarray,
+        atomwise: jnp.ndarray,
+        mask_qm: jnp.ndarray,
+        mask_mm: jnp.ndarray,
+        gfactors: jnp.ndarray,
+        xtb_param: GFN1ParamArray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        """Run SCF (bootstrapped from atomic charges) and return converged
+        per-atom shell charges, dipoles, and quadrupoles in the layout expected
+        by the `from_data` init-guess branch."""
+        coords_bohr = jnp.asarray(Rqm * A / Bohr)
+        mm_coords_bohr = jnp.asarray(Rmm * A / Bohr)
+        cell_bohr = jnp.asarray(cell * A / Bohr)
+
+        mol = MolePad(
+            jnp.asarray(zqm, dtype=jnp.int32),
+            coords_bohr,
+            basis=self.basis,
+            verbose=self.scf_verbose,
+            trace_coords=True,
+            charge=jnp.round(jnp.sum(qqm * mask_qm)).astype(int),
+        )
+
+        param_arr = self._apply_global(xtb_param, gfactors)
+        param_mol = param_arr.to_mol_param(mol)
+        param_mol = self._apply_atomwise(mol, param_mol, zqm, atomwise, mask_qm)
+
+        mf = GFN1XTB(mol, param_mol)
+        mm_radii = self.mm_radii_table[jnp.asarray(zmm, dtype=jnp.int32)]
+        mm_radii = mm_radii * mask_mm
+        mf = add_mm_charges(
+            mf,
+            mm_coords_bohr,
+            cell_bohr,
+            jnp.asarray(qmm * mask_mm),
+            jnp.asarray(mm_radii),
+            max_mm_nbr=self.max_mm_nbr,
+            mm_ew_rcut=self.mm_ew_rcut,
+            mm_ew_mesh=self.mm_ew_mesh,
+            qm_ew_mesh=self.qm_ew_mesh,
+            ew_precision=self.ew_precision,
+            unit="Bohr",
+            pbcqm=True,
+        )
+        mf.diis = "qbroyden"
+        mf.conv_tol = self.scf_conv_tol
+        mf.max_cycle = self.scf_max_cycle
+        mf.diis_damp = 0.6
+        mf.sigma = self.scf_sigma
+
+        atm_to_bas = jnp.asarray(atom_to_bas_indices(mol))
+        nbas_per_atom = jnp.bincount(atm_to_bas, length=mol.natm)
+        safe_nbas = jnp.where(nbas_per_atom > 0, nbas_per_atom, 1)
+        q0_shell = (qqm * mask_qm)[atm_to_bas] / safe_nbas[atm_to_bas]
+        q0_parts = [q0_shell]
+        if param_mol.dipgam is not None:
+            q0_parts.append(jnp.zeros(mol.natm * 3, dtype=q0_shell.dtype))
+        if param_mol.quadgam is not None:
+            q0_parts.append(jnp.zeros(mol.natm * 9, dtype=q0_shell.dtype))
+        q0 = jnp.concatenate(q0_parts)
+
+        mf.kernel(q0=q0)
+        dm = mf.make_rdm1()
+        shell_flat = mf.shell_charges(dm=dm)
+
+        first_idx = jnp.concatenate(
+            [jnp.zeros(1, dtype=nbas_per_atom.dtype), jnp.cumsum(nbas_per_atom)[:-1]]
+        )
+        shell_in_atom = jnp.arange(atm_to_bas.shape[0]) - first_idx[atm_to_bas]
+        shell_full = jnp.zeros((mol.natm, self.max_shells), dtype=shell_flat.dtype)
+        shell_full = shell_full.at[atm_to_bas, shell_in_atom].set(shell_flat)
+        shell_full = shell_full * mask_qm[:, None]
+
+        if param_mol.dipgam is not None:
+            dips = mf.get_qm_dipoles(dm) * mask_qm[:, None]
+        else:
+            dips = jnp.zeros((mol.natm, 3), dtype=shell_flat.dtype)
+        if param_mol.quadgam is not None:
+            quads = mf.get_qm_quadrupoles(dm) * mask_qm[:, None, None]
+        else:
+            quads = jnp.zeros((mol.natm, 3, 3), dtype=shell_flat.dtype)
+
+        return shell_full, dips, quads
+
+    def precompute_charges(self, batchdict: dict[str, jnp.ndarray]):
+        """Run MACE + xTB SCF and return per-graph converged
+        (shell_charges, atom_dips, atom_quads).
+
+        Shapes (per real graph in the batch):
+          shell_charges: (max_qm, max_shells)
+          atom_dips:     (max_qm, 3)
+          atom_quads:    (max_qm, 3, 3)
+        Padded atoms are zeroed.
+        """
+        mace_out = self.mace(batchdict, compute_node_feats=True)
+        node_feats = mace_out["node_feats"]
+        if node_feats is None:
+            raise RuntimeError("MACE model must return node_feats for parameter head.")
+        if self._scalar_feature_indices is not None:
+            node_feats = node_feats[:, self._scalar_feature_indices]
+
+        atomwise_raw = self.decoder(node_feats)
+        if self.preserve_sign:
+            atomwise = jax.nn.softplus(atomwise_raw)
+            gfactors = jax.nn.softplus(self.global_factors.value)
+            k_shlpr_factors = jax.nn.softplus(self.k_shlpr_diag_factors.value)
+        else:
+            atomwise = atomwise_raw
+            gfactors = self.global_factors.value
+            k_shlpr_factors = self.k_shlpr_diag_factors.value
+        base_param = self.xtb_param
+        k_shlpr_diag = jnp.diagonal(base_param.k_shlpr) * k_shlpr_factors
+        k_shlpr = 0.5 * (k_shlpr_diag[:, None] + k_shlpr_diag[None, :])
+        xtb_param = replace(base_param, k_shlpr=k_shlpr)
+
+        packed = self._pack_batch(batchdict, atomwise)
+        sc, ad, aq = jax.vmap(
+            self._xtb_charges_single,
+            in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None),
+        )(
+            packed["zqm"],
+            packed["Rqm"],
+            packed["zmm"],
+            packed["Rmm"],
+            packed["qqm"],
+            packed["qmm"],
+            packed["cell"],
+            packed["atomwise"],
+            packed["mask_qm"],
+            packed["mask_mm"],
+            gfactors,
+            xtb_param,
+        )
+        return sc, ad, aq
+
+
 __all__ = [
     "XTBModel",
 ]

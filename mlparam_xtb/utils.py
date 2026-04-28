@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import nnx
 import orbax.checkpoint as ocp
 from etils import epath
 from e3nn_jax import Irreps
+
+if TYPE_CHECKING:
+    from .models import XTBModel
+    from .data import QMMMDataset
 
 from mace_jax.tools import bundle as bundle_tools
 from mace_jax.cli.mace_jax_from_torch import convert_model
@@ -170,10 +175,44 @@ class Checkpointer:
             step = int(load)
         return mngr.restore(step, args=ocp.args.StandardRestore(state)), step
 
+def precompute_init_guess(
+    model: "XTBModel",
+    dataset: "QMMMDataset",
+    batch_size: int = 1,
+) -> None:
+    """Populate `shell_charges`/`atom_dips`/`atom_quads` on every sample in
+    `dataset` by running SCF once with the model's current parameters.
+
+    Run this at the start of training, then set `model.scf_init_guess = "from_data"`
+    so subsequent SCFs warm-start from the converged charges. Re-run periodically
+    if model parameters drift far from the precomputed regime.
+    """
+    from .data import DataLoader
+
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, drop_last=False, pad=True)
+    sample_idx = 0
+    n_samples = len(dataset.samples)
+    for batchdict in loader:
+        sc, ad, aq = model.precompute_charges(batchdict)
+        sc = np.asarray(sc)
+        ad = np.asarray(ad)
+        aq = np.asarray(aq)
+        for g in range(sc.shape[0]):
+            if sample_idx >= n_samples:
+                return
+            sample = dataset.samples[sample_idx]
+            n_q = sample.num_nodes
+            sample.shell_charges = sc[g, :n_q].copy()
+            sample.atom_dips = ad[g, :n_q].copy()
+            sample.atom_quads = aq[g, :n_q].copy()
+            sample_idx += 1
+
+
 __all__ = [
     "scalar_node_feature_indices",
     "energy_loss",
     "force_loss",
     "Checkpointer",
     "load_mace_module",
+    "precompute_init_guess",
 ]
