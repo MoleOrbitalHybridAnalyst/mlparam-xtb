@@ -126,7 +126,7 @@ class XTBModel(nnx.Module):
 
         self.mm_radii_table = nnx.data(jnp.asarray(COV_D3, dtype=jnp.float64))
 
-    def __call__(self, batchdict: dict[str, jnp.ndarray]):
+    def __call__(self, batchdict: dict):
         mace_out = self.mace(batchdict, compute_node_feats=True)
         node_feats = mace_out["node_feats"]
         if node_feats is None:
@@ -154,9 +154,10 @@ class XTBModel(nnx.Module):
 
         # pack per-graph tensors to fixed shapes and run vmapped XTB
         packed = self._pack_batch(batchdict, atomwise)
+        cuint_plan = batchdict.get("cuint_plan", None)
         e_xtb = jax.vmap(
             self._xtb_energy_single,
-            in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None),
+            in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None, None),
         )(
             packed["zqm"],
             packed["Rqm"],
@@ -173,6 +174,7 @@ class XTBModel(nnx.Module):
             packed["atom_quads"],
             gfactors,
             xtb_param,
+            cuint_plan,
         )
 
         # Pad e_xtb back to match the total number of graphs in the batch
@@ -324,6 +326,7 @@ class XTBModel(nnx.Module):
         atom_quads: jnp.ndarray,
         gfactors: jnp.ndarray,
         xtb_param: GFN1ParamArray,
+        cuint_plan=None,
     ) -> jnp.ndarray:
         coords_bohr = jnp.asarray(Rqm * A / Bohr)
         mm_coords_bohr = jnp.asarray(Rmm * A / Bohr)
@@ -336,6 +339,7 @@ class XTBModel(nnx.Module):
             verbose=self.scf_verbose,
             trace_coords=True,
             charge=jnp.round(jnp.sum(qqm * mask_qm)).astype(int),
+            cuint_plan=cuint_plan,
         )
 
         param_arr = self._apply_global(xtb_param, gfactors)
@@ -410,6 +414,7 @@ class XTBModel(nnx.Module):
         mask_mm: jnp.ndarray,
         gfactors: jnp.ndarray,
         xtb_param: GFN1ParamArray,
+        cuint_plan=None,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """Run SCF (bootstrapped from atomic charges) and return converged
         per-atom shell charges, dipoles, and quadrupoles in the layout expected
@@ -425,6 +430,7 @@ class XTBModel(nnx.Module):
             verbose=self.scf_verbose,
             trace_coords=True,
             charge=jnp.round(jnp.sum(qqm * mask_qm)).astype(int),
+            cuint_plan=cuint_plan,
         )
 
         param_arr = self._apply_global(xtb_param, gfactors)
@@ -488,7 +494,7 @@ class XTBModel(nnx.Module):
 
         return shell_full, dips, quads
 
-    def precompute_charges(self, batchdict: dict[str, jnp.ndarray]):
+    def precompute_charges(self, batchdict: dict):
         """Run MACE + xTB SCF and return per-graph converged
         (shell_charges, atom_dips, atom_quads).
 
@@ -520,9 +526,10 @@ class XTBModel(nnx.Module):
         xtb_param = replace(base_param, k_shlpr=k_shlpr)
 
         packed = self._pack_batch(batchdict, atomwise)
+        cuint_plan = batchdict.get("cuint_plan", None)
         sc, ad, aq = jax.vmap(
             self._xtb_charges_single,
-            in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None),
+            in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None, None),
         )(
             packed["zqm"],
             packed["Rqm"],
@@ -536,6 +543,7 @@ class XTBModel(nnx.Module):
             packed["mask_mm"],
             gfactors,
             xtb_param,
+            cuint_plan,
         )
         return sc, ad, aq
 

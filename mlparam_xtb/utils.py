@@ -208,6 +208,41 @@ def precompute_init_guess(
             sample_idx += 1
 
 
+def precompute_cuint_plan(model: "XTBModel", dataset: "QMMMDataset") -> None:
+    """Build a cuint plan for `dataset` and cache it on the dataset, so the
+    `DataLoader` will inject it into every batch and the model dispatches xTB
+    integrals to the GPU backend.
+
+    Assumes a single chemical composition across the dataset (true for a
+    QMMMDataset built from one npz file).
+    """
+    from pyscfad.experimental.moleintor_cuint import _cuint, cuint_create_plan
+    from pyscfad.ml.gto import MolePad
+
+    if not _cuint:
+        raise RuntimeError(
+            "pyscfad cuint backend not available; rebuild pyscfad with CUDA support."
+        )
+    if not dataset.samples:
+        raise ValueError("Cannot precompute cuint plan for empty dataset.")
+
+    z0 = np.asarray(dataset.samples[0].z, dtype=np.int32)
+    for s in dataset.samples[1:]:
+        z = np.asarray(s.z, dtype=np.int32)
+        if z.shape != z0.shape or not np.array_equal(z, z0):
+            raise NotImplementedError(
+                "precompute_cuint_plan requires all samples to share the same "
+                "atomic-number sequence; mixed-composition datasets need per-batch "
+                "plan merging which is not yet implemented."
+            )
+
+    numbers = np.zeros(model.max_qm, dtype=np.int32)
+    numbers[: z0.shape[0]] = z0
+    coords = np.zeros((model.max_qm, 3), dtype=np.float64)
+    mol = MolePad(numbers, coords, basis=model.basis, verbose=0)
+    dataset.cuint_plan = cuint_create_plan(mol)
+
+
 __all__ = [
     "scalar_node_feature_indices",
     "energy_loss",
@@ -215,4 +250,5 @@ __all__ = [
     "Checkpointer",
     "load_mace_module",
     "precompute_init_guess",
+    "precompute_cuint_plan",
 ]

@@ -397,7 +397,11 @@ class DataLoader:
             batch = _collate(batch_items)
             if self.pad:
                 batch = pad_batch(batch, self.n_node, self.n_edge, self.n_mm_node, self.n_graph)
-            yield {k: jnp.asarray(v) for k, v in batch.items()}
+            out = {k: jnp.asarray(v) for k, v in batch.items()}
+            cuint_plan = getattr(self.dataset, "cuint_plan", None)
+            if cuint_plan is not None:
+                out["cuint_plan"] = cuint_plan
+            yield out
 
 
 __all__ = ["QMMMData", "QMMMDataset", "DataLoader", "pad_batch"]
