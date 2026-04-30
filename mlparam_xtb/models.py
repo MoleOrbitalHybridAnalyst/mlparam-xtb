@@ -33,6 +33,7 @@ class XTBModel(nnx.Module):
         max_qm: int | None = None,
         max_mm: int | None = None,
         ew_precision: float = 1e-6,
+        scf_diis_damp: float = 0.6,
         scf_conv_tol: float = 1e-6,
         scf_max_cycle: int = 50,
         scf_verbose: int = 0,
@@ -54,6 +55,7 @@ class XTBModel(nnx.Module):
         self.basis = nnx.data(basis)
         self.preserve_sign = preserve_sign
         self.ew_precision = ew_precision
+        self.scf_diis_damp = scf_diis_damp
         self.scf_conv_tol = scf_conv_tol
         self.scf_max_cycle = scf_max_cycle
         self.scf_verbose = scf_verbose
@@ -309,6 +311,49 @@ class XTBModel(nnx.Module):
             lgam=param.lgam * flat(3),
         )
 
+    def _build_q0(
+        self,
+        mol,
+        param_mol,
+        qqm: jnp.ndarray,
+        mask_qm: jnp.ndarray,
+        shell_charges: jnp.ndarray,
+        atom_dips: jnp.ndarray,
+        atom_quads: jnp.ndarray,
+    ):
+        """Construct the SCF initial-guess vector according to ``self.scf_init_guess``.
+
+        Returns ``None`` for the ``pyscfad`` mode (caller passes no ``q0`` to
+        ``mf.kernel``), or a packed 1-D array containing the shell-charge block
+        followed by optional dipole/quadrupole blocks.
+        """
+        if self.scf_init_guess == "pyscfad":
+            return None
+
+        atm_to_bas = jnp.asarray(atom_to_bas_indices(mol))
+        nbas_per_atom = jnp.bincount(atm_to_bas, length=mol.natm)
+        safe_nbas = jnp.where(nbas_per_atom > 0, nbas_per_atom, 1)
+
+        if self.scf_init_guess == "atomic_charges":
+            q0_shell = (qqm * mask_qm)[atm_to_bas] / safe_nbas[atm_to_bas]
+            dip_block = jnp.zeros(mol.natm * 3, dtype=q0_shell.dtype)
+            quad_block = jnp.zeros(mol.natm * 9, dtype=q0_shell.dtype)
+        else:  # "from_data"
+            first_idx = jnp.concatenate(
+                [jnp.zeros(1, dtype=nbas_per_atom.dtype), jnp.cumsum(nbas_per_atom)[:-1]]
+            )
+            shell_in_atom = jnp.arange(atm_to_bas.shape[0]) - first_idx[atm_to_bas]
+            q0_shell = shell_charges[atm_to_bas, shell_in_atom] * mask_qm[atm_to_bas]
+            dip_block = (atom_dips * mask_qm[:, None]).reshape(-1)
+            quad_block = (atom_quads * mask_qm[:, None, None]).reshape(-1)
+
+        q0_parts = [q0_shell]
+        if param_mol.dipgam is not None:
+            q0_parts.append(dip_block)
+        if param_mol.quadgam is not None:
+            q0_parts.append(quad_block)
+        return jnp.concatenate(q0_parts)
+
     def _xtb_energy_single(
         self,
         zqm: jnp.ndarray,
@@ -366,38 +411,12 @@ class XTBModel(nnx.Module):
         mf.diis = "qbroyden"
         mf.conv_tol = self.scf_conv_tol
         mf.max_cycle = self.scf_max_cycle
-        mf.diis_damp = 0.6
+        mf.diis_damp = self.scf_diis_damp
         mf.sigma = self.scf_sigma
 
-        if self.scf_init_guess == "pyscfad":
-            energy = mf.kernel()
-        else:
-            atm_to_bas = jnp.asarray(atom_to_bas_indices(mol))
-            nbas_per_atom = jnp.bincount(atm_to_bas, length=mol.natm)
-            safe_nbas = jnp.where(nbas_per_atom > 0, nbas_per_atom, 1)
-
-            if self.scf_init_guess == "atomic_charges":
-                q0_shell = (qqm * mask_qm)[atm_to_bas] / safe_nbas[atm_to_bas]
-                dip_block = jnp.zeros(mol.natm * 3, dtype=q0_shell.dtype)
-                quad_block = jnp.zeros(mol.natm * 9, dtype=q0_shell.dtype)
-            else:  # "from_data"
-                first_idx = jnp.concatenate(
-                    [jnp.zeros(1, dtype=nbas_per_atom.dtype), jnp.cumsum(nbas_per_atom)[:-1]]
-                )
-                shell_in_atom = jnp.arange(atm_to_bas.shape[0]) - first_idx[atm_to_bas]
-                q0_shell = shell_charges[atm_to_bas, shell_in_atom] * mask_qm[atm_to_bas]
-                dip_block = (atom_dips * mask_qm[:, None]).reshape(-1)
-                quad_block = (atom_quads * mask_qm[:, None, None]).reshape(-1)
-
-            q0_parts = [q0_shell]
-            if param_mol.dipgam is not None:
-                q0_parts.append(dip_block)
-            if param_mol.quadgam is not None:
-                q0_parts.append(quad_block)
-            q0 = jnp.concatenate(q0_parts)
-
-            energy = mf.kernel(q0=q0)
-
+        q0 = self._build_q0(mol, param_mol, qqm, mask_qm,
+                            shell_charges, atom_dips, atom_quads)
+        energy = mf.kernel() if q0 is None else mf.kernel(q0=q0)
         return jnp.asarray(energy) * hartree / eV
 
     def _xtb_charges_single(
@@ -412,13 +431,16 @@ class XTBModel(nnx.Module):
         atomwise: jnp.ndarray,
         mask_qm: jnp.ndarray,
         mask_mm: jnp.ndarray,
+        shell_charges: jnp.ndarray,
+        atom_dips: jnp.ndarray,
+        atom_quads: jnp.ndarray,
         gfactors: jnp.ndarray,
         xtb_param: GFN1ParamArray,
         cuint_plan=None,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """Run SCF (bootstrapped from atomic charges) and return converged
-        per-atom shell charges, dipoles, and quadrupoles in the layout expected
-        by the `from_data` init-guess branch."""
+        """Run SCF (using the model's current ``scf_init_guess``) and return
+        converged per-atom shell charges, dipoles, and quadrupoles in the
+        layout expected by the ``from_data`` init-guess branch."""
         coords_bohr = jnp.asarray(Rqm * A / Bohr)
         mm_coords_bohr = jnp.asarray(Rmm * A / Bohr)
         cell_bohr = jnp.asarray(cell * A / Bohr)
@@ -457,24 +479,20 @@ class XTBModel(nnx.Module):
         mf.diis = "qbroyden"
         mf.conv_tol = self.scf_conv_tol
         mf.max_cycle = self.scf_max_cycle
-        mf.diis_damp = 0.6
+        mf.diis_damp = self.scf_diis_damp
         mf.sigma = self.scf_sigma
 
-        atm_to_bas = jnp.asarray(atom_to_bas_indices(mol))
-        nbas_per_atom = jnp.bincount(atm_to_bas, length=mol.natm)
-        safe_nbas = jnp.where(nbas_per_atom > 0, nbas_per_atom, 1)
-        q0_shell = (qqm * mask_qm)[atm_to_bas] / safe_nbas[atm_to_bas]
-        q0_parts = [q0_shell]
-        if param_mol.dipgam is not None:
-            q0_parts.append(jnp.zeros(mol.natm * 3, dtype=q0_shell.dtype))
-        if param_mol.quadgam is not None:
-            q0_parts.append(jnp.zeros(mol.natm * 9, dtype=q0_shell.dtype))
-        q0 = jnp.concatenate(q0_parts)
-
-        mf.kernel(q0=q0)
+        q0 = self._build_q0(mol, param_mol, qqm, mask_qm,
+                            shell_charges, atom_dips, atom_quads)
+        if q0 is None:
+            mf.kernel()
+        else:
+            mf.kernel(q0=q0)
         dm = mf.make_rdm1()
         shell_flat = mf.shell_charges(dm=dm)
 
+        atm_to_bas = jnp.asarray(atom_to_bas_indices(mol))
+        nbas_per_atom = jnp.bincount(atm_to_bas, length=mol.natm)
         first_idx = jnp.concatenate(
             [jnp.zeros(1, dtype=nbas_per_atom.dtype), jnp.cumsum(nbas_per_atom)[:-1]]
         )
@@ -529,7 +547,7 @@ class XTBModel(nnx.Module):
         cuint_plan = batchdict.get("cuint_plan", None)
         sc, ad, aq = jax.vmap(
             self._xtb_charges_single,
-            in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None, None),
+            in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None, None),
         )(
             packed["zqm"],
             packed["Rqm"],
@@ -541,6 +559,9 @@ class XTBModel(nnx.Module):
             packed["atomwise"],
             packed["mask_qm"],
             packed["mask_mm"],
+            packed["shell_charges"],
+            packed["atom_dips"],
+            packed["atom_quads"],
             gfactors,
             xtb_param,
             cuint_plan,
