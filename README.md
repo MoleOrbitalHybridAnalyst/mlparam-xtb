@@ -18,7 +18,7 @@ The entire package is implemented in **JAX** using PySCFAD and MACE-JAX, making 
 This package relies on JAX-based MLIP and quantum chemistry libraries:
 
 - `mace-jax` (Tested with `github.com:ACEsuit/mace-jax`, `main` branch, commit `9fe59d9d0f953c4a052b522a386d5b855bea248f`)
-- `pyscfad` (Tested with `https://github.com/MoleOrbitalHybridAnalyst/pyscfad.git`, branch `fishjojo-mlxtb`, commit `7f99f546ebe3f0e2369591785e79a419e42cc60e`)
+- `pyscfad` (Tested with `https://github.com/MoleOrbitalHybridAnalyst/pyscfad.git`, branch `fishjojo-mlxtb`, commit `0c042eb6fc2fc378f8d388bcbb7974978e544b26`)
 
 ## Basic Usage
 
