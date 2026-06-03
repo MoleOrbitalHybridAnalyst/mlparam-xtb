@@ -44,6 +44,7 @@ class XTBModel(nnx.Module):
         qm_ew_mesh: Sequence[int] = (40, 40, 40),
         n_decoder_layer: int = 1,
         scf_init_guess: str = "atomic_charges",
+        one_scf: bool = False,
     ) -> None:
         if scf_init_guess not in ("pyscfad", "atomic_charges", "from_data"):
             raise ValueError(
@@ -63,6 +64,7 @@ class XTBModel(nnx.Module):
         self.max_mm_nbr = max_mm_nbr
         self.mm_ew_rcut = mm_ew_rcut
         self.qm_ew_mesh = qm_ew_mesh
+        self.one_scf = one_scf
 
 
         if max_qm is None or max_mm is None:
@@ -416,7 +418,17 @@ class XTBModel(nnx.Module):
 
         q0 = self._build_q0(mol, param_mol, qqm, mask_qm,
                             shell_charges, atom_dips, atom_quads)
-        energy = mf.kernel() if q0 is None else mf.kernel(q0=q0)
+        if self.one_scf:
+            s1e = mf.get_ovlp()
+            h1e = mf.get_hcore(mol, s1e=s1e)
+            vhf = mf.get_veff(mf.mol, s1e=s1e, q=q0)
+            fock = mf.get_fock(h1e=h1e, vhf=vhf)
+            mo_energy, mo_coeff = mf.eig(fock, s1e)
+            mo_occ = mf.get_occ(mo_energy, mo_coeff)
+            dm_new = mf.make_rdm1(mo_coeff, mo_occ)
+            energy = mf.energy_tot(dm_new, h1e, vhf)
+        else:
+            energy = mf.kernel() if q0 is None else mf.kernel(q0=q0)
         return jnp.asarray(energy) * hartree / eV
 
     def _xtb_charges_single(
